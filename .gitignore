@@ -4,13 +4,15 @@
 # CubeMX日志
 *.log
 
-# ===================== Keil MD5/MDK 工程 =====================
-# 用户个人界面、调试配置
+# ===================== Keil MDK 工程 =====================
+# 用户个人界面、调试配置（多人协作必忽略）
 *.uvoptx
 *.uvguix.*
 *.uvopt
 *.uvgui.*
 *.uvmpw
+**/DebugConfig/
+*.dbgconf
 
 # 编译输出文件夹
 **/Objects/
@@ -30,10 +32,17 @@
 *.iex
 *.plg
 *.build_log.htm
+*.lnp
+*.sct
+*.htm
 
 # 临时文件
 *.tmp
 *~
+
+# ===================== VSCode Keil助手插件日志 =====================
+uv4.log
+uv4.log.lock
 
 # ===================== J-Link / 调试工具 =====================
 JLinkLog.txt
