@@ -1,0 +1,120 @@
+/*
+ * nagivation.h
+ *
+ *  Created on: 2024��10��16��
+ *      Author: Monst
+ */
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifndef _NAVIGATION_H_
+#define _NAVIGATION_H_
+
+/*================== 惯导位姿 ==================*/
+
+#define NAV_PI  3.14159265f
+
+typedef struct {
+    float X;        // 世界坐标系X位置 (m)
+    float Y;        // 世界坐标系Y位置 (m)
+    float Theta;    // 世界坐标系航向角 (rad, 逆时针为正)
+
+    float Vx_body;  // 底盘横向速度 (m/s), 右侧为正
+    float Vy_body;  // 底盘纵向速度 (m/s), 前方为正
+    float Omega;    // 底盘旋转角速度 (rad/s), 逆时针为正
+
+    float Vx_world; // 世界坐标系X方向速度
+    float Vy_world;
+
+    float mileage;      // 总行驶里程 (m)
+    float Theta_imu;    // IMU提供的航向角 (rad)
+    float Omega_imu;    // IMU提供的角速度 (rad/s)
+
+    uint32_t last_tick_ms;
+    uint8_t  is_inited;
+    uint8_t  use_imu_fusion; // 1:启用IMU融合(推荐), 0:纯轮速
+} Nav_Odom_t;
+
+extern Nav_Odom_t Nav_Odom;
+
+void Nav_Odom_Init(void);
+void Nav_Odom_Update(void);
+void Nav_Odom_Reset(float x, float y, float theta);
+Nav_Odom_t* Nav_Get_Odom(void);
+
+/*================== 路径点 ==================*/
+
+#define NAV_PATH_POINT_DIST  0.05f   // 路径点间隔 5cm
+#define NAV_MAX_PATH_POINTS  2000    // 最大支持的路径点数 (约100m)
+#define NAV_POINTS_PER_PAGE  150     // 每Flash页存150个点 (150*3*4=1800 bytes)
+
+typedef struct {
+    float X;
+    float Y;
+    float Theta;
+} NavPathPoint_t;
+
+extern NavPathPoint_t Nav_Path[NAV_MAX_PATH_POINTS];
+extern uint16_t Nav_PathCount;  // 当前有效路径点数
+
+/*================== 导航控制参数 ==================*/
+
+#define NAV_KP_LONG   2.0f   // 纵向偏差增益 (车头方向)
+#define NAV_KP_LAT    3.0f   // 横向偏差增益 (垂直车头方向, 麦轮横移用)
+#define NAV_KP_ANGLE  2.5f   // 角度偏差增益
+#define NAV_MAX_VEL   0.5f   // 导航输出速度限幅 (m/s)
+#define NAV_MAX_OMEGA 2.0f   // 导航输出角速度限幅 (rad/s)
+#define NAV_ARRIVE_DIST 0.03f // 到达判定距离 (3cm)
+
+/*================== Flash 相关 ==================*/
+
+#define MaxSize 500    //flash存储点阵数据页数 (兼容旧定义, 实际用NAV_POINTS_PER_PAGE)
+
+#define Read_MaxSize 10000//读取用设定
+
+#define Nag_End_Page 1
+#define Nag_Start_Page 45
+
+/*================== 导航状态结构体 ==================*/
+
+typedef struct{
+    // 控制输出 (供上层或直接调用底盘)
+    float Final_Out;    // 角度偏差 (兼容旧接口, rad)
+    float ctrl_vx;      // 横向速度输出 (m/s)
+    float ctrl_vy;      // 纵向速度输出 (m/s)
+    float ctrl_omega;   // 旋转角速度输出 (rad/s)
+
+    // 路径跟踪状态
+    bool Nag_Stop_f;
+    uint8_t Flash_read_f;
+    uint16_t size;
+    uint16_t Run_index;
+    uint16_t Save_count;
+    uint16_t Save_index;    // 总路径点数
+    uint8_t Save_state;
+    uint8_t End_f;
+
+    // Flash相关
+    uint8_t Flash_page_index;
+    uint8_t Flash_Save_Page_Index;
+    uint8_t Nag_SystemRun_Index;
+
+    // 记录/跟踪辅助
+    float last_record_X;
+    float last_record_Y;
+    uint16_t track_target_idx;  // 当前跟踪的目标点索引
+} Nag;
+
+extern Nag N;
+
+/*================== 导航接口 ==================*/
+
+void Nag_Run(void);         // 导航主控函数 (记录或跟踪)
+void Run_Nag_GPS(void);     // 路径跟踪更新
+void Run_Nag_Save(void);    // 路径记录更新
+void Nag_Read(void);        // 导航状态机
+void Init_Nag(void);        // 导航初始化
+void Nag_System(void);      // 导航系统调度
+void NagFlashRead(void);    // 从Flash加载路径
+
+#endif /* _NAVIGATION_H_ */

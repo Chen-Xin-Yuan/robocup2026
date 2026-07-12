@@ -1,0 +1,49 @@
+# ===================== CubeMX 相关 =====================
+.mxproject/
+*.bak
+# CubeMX日志
+*.log
+
+# ===================== Keil MD5/MDK 工程 =====================
+# 用户个人界面、调试配置
+*.uvoptx
+*.uvguix.*
+*.uvopt
+*.uvgui.*
+*.uvmpw
+
+# 编译输出文件夹
+**/Objects/
+**/Listings/
+
+# 编译产物、中间文件
+*.axf
+*.elf
+*.hex
+*.bin
+*.map
+*.lst
+*.crf
+*.o
+*.d
+*.dep
+*.iex
+*.plg
+*.build_log.htm
+
+# 临时文件
+*.tmp
+*~
+
+# ===================== J-Link / 调试工具 =====================
+JLinkLog.txt
+JLinkSettings.ini
+
+# ===================== IDE、系统缓存 =====================
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# ===================== 其他备份文件 =====================
+*_backup.*
