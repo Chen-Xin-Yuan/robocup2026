@@ -6,24 +6,46 @@
 #include "stdbool.h"
 #include "motor_def.h"
 #include "main.h"
+
+/* 外部全局电机定义 (定义在 Chassis.c) */
+extern StepMotorZDT_t Motor1, Motor2, Motor3, Motor4;
+
+typedef struct
+{
+    uint32_t id; // 程序中的id,用于其它模块访问该电机模块
+    uint32_t id_protocol; // 电机的协议id
+    //最大值限制
+    float velocity_lim;
+    float iq_lim;
+    
+    //实际
+    float real_velocity; // rad/s
+    float real_deg_pos; // (rad)
+    float real_current; // (A)
+    int16_t real_rpm; // r/min
+    //目标
+    float tar_velocity;
+    float tar_deg_pos; 
+    float tar_current;
+    int16_t tar_rpm;
+  
+} Motor_Controller_struct;
+
 typedef struct
 {
     Motor_Controller_struct motor_controller_t; // 控制电机id
     UART_HandleTypeDef *_USART;
     int8_t  _dir;               // 正转方向
-    int16_t _target_rpm;        // 目标转速 (指令值, RPM)
     float   _wheel_diameter;    // 轮子直径
     bool    _have_pub_permission; // 是否有发布权限
     uint8_t _cmd_buffer[20];    // 命令缓冲区
 
-    /*==== 真实反馈数据  ====*/
-    int16_t  _real_rpm;          // 电机回传的实际转速 (RPM), 有方向
-    float    _real_linear_speed; // 实际线速度 (m/s), 由 _real_rpm 换算
-    int32_t  _encoder_value;     // 编码器累计值 (脉冲数, 带方向), 功能码0x30
+    // /*==== 真实反馈数据  ====*/
+    // int16_t  _real_rpm;          // 电机回传的实际转速 (RPM), 有方向
+    // float    _real_linear_speed; // 实际线速度 (m/s), 由 _real_rpm 换算
+    // int32_t  _encoder_value;     // 编码器累计值 (脉冲数, 带方向), 功能码0x30
     uint32_t _last_query_tick;   // 上次查询的时间戳 (ms), 用于轮询间隔控制
 } StepMotorZDT_t;
-//extern StepMotorZDT_t Motor1, Motor2, Motor3, Motor4; // 定义步进电机结构体
-
 
 void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint32_t id ,UART_HandleTypeDef *_USART,int8_t _dir, float _wheel_diameter,
      bool _have_pub_permission);
@@ -36,9 +58,6 @@ float get_linear_speed(StepMotorZDT_t* zdt_motor);
 // 获得边缘线速度
 
 /*================== Emm_V5 真实反馈查询接口 ==================*/
-
-/* 四个电机全局实例 (定义在 Chassis.c) */
-extern StepMotorZDT_t Motor1, Motor2, Motor3, Motor4;
 
 /**
  * @brief 发送读取实际转速命令 (功能码 0x33)
