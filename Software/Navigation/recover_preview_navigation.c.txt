@@ -1,0 +1,465 @@
+FILE: navigation.c
+Unrecoverable chars: 169
+BOM: False
+============================================================
+/*
+* navigation.c
+*
+*  Created on: 2024锟斤拷10锟斤拷16锟斤拷
+*      Author: Monst
+*
+*  銆愰噸鏋勮?鏄庛?戦?傞厤楹﹁疆搴曠洏鍏ㄥ悜鎯??瀵艰埅
+*  1. 鎯??浣嶅Э(Nav_Odom_t)浠嶤hassis.c杩佺Щ鑷虫?, 缁熶竴绠＄悊涓栫晫鍧愭爣X,Y,Theta
+*  2. IMU铻嶅悎: 鐢↖MU鐨剏aw瑙掔洿鎺ユ浛鎹㈣疆閫熺Н鍒嗙殑鑸?悜瑙?, 娑堥櫎婕傜Щ
+*  3. 璺?緞璁板綍: 浠庡瓨"閲岀▼+yaw"鏀逛负瀛?"X,Y,Theta"璺?緞鐐?, 鏀?寔妯?Щ/鏂滆蛋璁板綍
+*  4. 璺?緞璺熻釜: 楹﹁疆鍏ㄥ悜鎺у埗, 鍚屾椂杈撳嚭vx/vy/omega, 鍒╃敤妯?Щ淇??妯?悜鍋忓樊
+*/
+
+#include "stm32f4xx_hal.h"
+#include "navigation.h"
+#include "kalman.h"
+#include "Chassis.h"
+#include "flash.h"
+#include <math.h>
+#include <string.h>
+
+/*================== 鍏ㄥ眬鍙橀噺 ==================*/
+
+Nav_Odom_t Nav_Odom;
+NavPathPoint_t Nav_Path[NAV_MAX_PATH_POINTS];
+uint16_t Nav_PathCount = 0;
+
+Nag N;
+
+// 鍏煎?鏃ф帴鍙?, 浣嗕笉鍐嶄綔涓轰富瑕佸瓨鍌?
+int32_t Nav_read[Read_MaxSize];
+
+/*================== Flash 椤靛ぇ灏忎慨姝? ==================*/
+#define FLASH_PAGE_SIZE  2048
+#define NAV_LOOK_AHEAD_DIST 0.05f
+
+/*================== 鎯??浣嶅Э浼拌? ==================*/
+
+/**
+ * @brief 瑙掑害褰掍竴鍖栧埌 [-PI, +PI]
+ */
+static float nav_angle_norm(float angle)
+{
+    while (angle > NAV_PI)  angle -= 2.0f * NAV_PI;
+    while (angle < -NAV_PI) angle += 2.0f * NAV_PI;
+    return angle;
+}
+
+/**
+ * @brief 搴曠洏鍧愭爣绯婚?熷害 鈫? 涓栫晫鍧愭爣绯婚?熷害
+ */
+static void nav_body_to_world(float vx, float vy, float theta,
+                               float *vx_w, float *vy_w)
+{
+    float c = cosf(theta);
+    float s = sinf(theta);
+    *vx_w = vx * c - vy * s;
+    *vy_w = vx * s + vy * c;
+}
+
+void Nav_Odom_Init(void)
+{
+    memset(&Nav_Odom, 0, sizeof(Nav_Odom_t));
+    Nav_Odom.last_tick_ms = HAL_GetTick();
+    Nav_Odom.is_inited = 1;
+    Nav_Odom.use_imu_fusion = 1;    // 榛樿?鍚?敤IMU铻嶅悎
+}
+
+void Nav_Odom_Reset(float x, float y, float theta)
+{
+    Nav_Odom.X = x;
+    Nav_Odom.Y = y;
+    Nav_Odom.Theta = theta;
+    Nav_Odom.Vx_body = 0.0f;
+    Nav_Odom.Vy_body = 0.0f;
+    Nav_Odom.Omega = 0.0f;
+    Nav_Odom.Vx_world = 0.0f;
+    Nav_Odom.Vy_world = 0.0f;
+    Nav_Odom.mileage = 0.0f;
+    Nav_Odom.last_tick_ms = HAL_GetTick();
+}
+
+Nav_Odom_t* Nav_Get_Odom(void)
+{
+    return &Nav_Odom;
+}
+
+/**
+ * @brief 鎯??浣嶅Э鏇存柊 (鏍稿績鍑芥暟)
+ * @note  寤鸿?鍦? 1ms~10ms 鍛ㄦ湡浠诲姟涓?皟鐢?
+ *
+ * 銆愭祦绋嬨??
+ *  1. 璋冪敤 Chassis_GetBodySpeed() 鑾峰彇搴曠洏鍧愭爣绯婚?熷害 (vx_body, vy_body)
+ *  2. 璋冪敤 Kalman_GetYawRad() / Kalman_GetYawOmegaRad() 鑾峰彇IMU鏁版嵁
+ *  3. 铻嶅悎: Theta/Omega 鍙朓MU (鏃犳紓绉?), 浣嶇疆鐢辫疆閫熺Н鍒?
+ *  4. 鍧愭爣杞?崲: 搴曠洏閫熷害 鈫? 涓栫晫鍧愭爣绯婚?熷害 (鐢ㄨ瀺鍚堝悗鐨凾heta)
+ *  5. 绉?垎鏇存柊 X, Y, mileage
+ */
+void Nav_Odom_Update(void)
+{
+    if (!Nav_Odom.is_inited) {
+        Nav_Odom_Init();
+        return;
+    }
+
+    uint32_t now_ms = HAL_GetTick();
+    float dt = (now_ms - Nav_Odom.last_tick_ms) * 0.001f;
+
+    if (dt > 0.1f || dt <= 0.0f) {
+        Nav_Odom.last_tick_ms = now_ms;
+        return;
+    }
+
+    // 1. 鑾峰彇搴曠洏鍧愭爣绯婚?熷害 (瀹炴椂姝ｈВ绠?, 涓嶄緷璧栧叏灞?鐘舵??)
+    float vx_body, vy_body, omega_wheel;
+    Chassis_GetBodySpeed(&vx_body, &vy_body, &omega_wheel);
+
+    Nav_Odom.Vx_body = vx_body;
+    Nav_Odom.Vy_body = vy_body;
+
+    // 2. 鑾峰彇IMU鏁版嵁
+    float theta_imu = Kalman_GetYawRad();
+    float omega_imu = Kalman_GetYawOmegaRad();
+
+    Nav_Odom.Theta_imu = theta_imu;
+    Nav_Odom.Omega_imu = omega_imu;
+
+    // 3. 銆愭儻瀵艰瀺鍚堟牳蹇冦??
+    if (Nav_Odom.use_imu_fusion) {
+        Nav_Odom.Theta = theta_imu;
+        Nav_Odom.Omega = omega_imu;
+    } else {
+        Nav_Odom.Omega = omega_wheel;
+        Nav_Odom.Theta = nav_angle_norm(Nav_Odom.Theta + omega_wheel * dt);
+    }
+
+    // 4. 鍧愭爣杞?崲: 搴曠洏 鈫? 涓栫晫
+    float vx_world, vy_world;
+    nav_body_to_world(vx_body, vy_body, Nav_Odom.Theta, &vx_world, &vy_world);
+
+    Nav_Odom.Vx_world = vx_world;
+    Nav_Odom.Vy_world = vy_world;
+
+    // 5. 绉?垎鏇存柊浣嶅Э
+    float dx = vx_world * dt;
+    float dy = vy_world * dt;
+
+    Nav_Odom.X += dx;
+    Nav_Odom.Y += dy;
+    Nav_Odom.mileage += sqrtf(dx * dx + dy * dy);
+
+    Nav_Odom.last_tick_ms = now_ms;
+}
+
+/*================== 璺?緞璁板綍 ==================*/
+
+/**
+ * @brief 璺?緞璁板綍鏇存柊
+ * @note  姣忚蛋 NAV_PATH_POINT_DIST (5cm) 璁板綍涓?涓? (X,Y,Theta) 璺?緞鐐?
+ *
+ * 銆愪笌鏃т唬鐮佸尯鍒???
+ *  鏃?: 姣忚蛋鍥哄畾閲岀▼璁板綍涓?涓? yaw 瑙? (鍋囪?鍏ㄧ▼鍓嶈繘)
+ *  鏂?: 鐢ㄦ?姘忚窛绂诲垽鏂?, 璁板綍瀹屾暣浣嶅Э (X,Y,Theta), 鏀?寔妯?Щ/鏂滆蛋
+ */
+void Run_Nag_Save(void)
+{
+    Nav_Odom_t* odom = &Nav_Odom;
+
+    // 璁＄畻涓庝笂涓?涓??褰曠偣鐨勬?姘忚窛绂?
+    float dx = odom->X - N.last_record_X;
+    float dy = odom->Y - N.last_record_Y;
+    float dist = sqrtf(dx * dx + dy * dy);
+
+    if (dist >= NAV_PATH_POINT_DIST) {
+        if (Nav_PathCount >= NAV_MAX_PATH_POINTS) {
+            // 璺?緞鐐瑰凡婊?, 鏍囪?缁撴潫
+            N.End_f = 1;
+            return;
+        }
+
+        // 璁板綍鏂拌矾寰勭偣鍒? RAM
+        Nav_Path[Nav_PathCount].X = odom->X;
+        Nav_Path[Nav_PathCount].Y = odom->Y;
+        Nav_Path[Nav_PathCount].Theta = odom->Theta;
+
+        // 鍚屾椂鍐欏叆 flash_union_buffer (鎸夐〉缁勭粐)
+        uint16_t page_offset = Nav_PathCount % NAV_POINTS_PER_PAGE;
+        flash_union_buffer[page_offset * 3 + 0] = *(uint32_t*)&odom->X;
+        flash_union_buffer[page_offset * 3 + 1] = *(uint32_t*)&odom->Y;
+        flash_union_buffer[page_offset * 3 + 2] = *(uint32_t*)&odom->Theta;
+
+        Nav_PathCount++;
+        N.Save_index = Nav_PathCount;
+        N.last_record_X = odom->X;
+        N.last_record_Y = odom->Y;
+
+        // 褰撳墠椤垫弧, 鍐欏叆Flash (缁撴潫鏃剁殑鍐欏叆鐢? Nag_Run/Nag_Read 缁熶竴澶勭悊)
+        if ((Nav_PathCount % NAV_POINTS_PER_PAGE) == 0) {
+            flash_Nag_Write();
+        }
+    }
+}
+
+/*================== 璺?緞璺熻釜 ==================*/
+
+/**
+ * @brief 鎵惧埌绂诲綋鍓嶄綅缃?渶杩戠殑璺?緞鐐圭储寮?
+ */
+static uint16_t nav_find_nearest_point(float x, float y)
+{
+    uint16_t nearest_idx = N.track_target_idx;
+    float min_dist_sq = 1e10f;
+
+    // 浠庡綋鍓嶈窡韪?储寮曢檮杩戞悳绱?, 閬垮厤鍥為??
+    uint16_t start = N.track_target_idx;
+    uint16_t end = Nav_PathCount;
+    if (end > start + 50) end = start + 50; // 鏈?澶氬悜鍓嶇湅50涓?偣
+
+    for (uint16_t i = start; i < end; i++) {
+        float dx = Nav_Path[i].X - x;
+        float dy = Nav_Path[i].Y - y;
+        float dist_sq = dx * dx + dy * dy;
+        if (dist_sq < min_dist_sq) {
+            min_dist_sq = dist_sq;
+            nearest_idx = i;
+        }
+    }
+    return nearest_idx;
+}
+
+/**
+ * @brief 鎵惧埌鍓嶈?鐩?爣鐐圭储寮?
+ * @note  浠庢渶杩戠偣鍚戝墠鎼滅储, 鎵惧埌璺濈?褰撳墠浣嶇疆绾? NAV_LOOK_AHEAD_DIST 鐨勭偣
+ */
+static uint16_t nav_find_lookahead_point(uint16_t nearest_idx, float x, float y)
+{
+    float look_ahead_sq = NAV_LOOK_AHEAD_DIST * NAV_LOOK_AHEAD_DIST;
+
+    for (uint16_t i = nearest_idx; i < Nav_PathCount; i++) {
+        float dx = Nav_Path[i].X - x;
+        float dy = Nav_Path[i].Y - y;
+        float dist_sq = dx * dx + dy * dy;
+        if (dist_sq >= look_ahead_sq) {
+            return i;
+        }
+    }
+    // 濡傛灉鍒扮粓鐐归兘涓嶅?鍓嶈?璺濈?, 杩斿洖鏈?鍚庝竴涓?偣
+    return (Nav_PathCount > 0) ? (Nav_PathCount - 1) : 0;
+}
+
+/**
+ * @brief 璺?緞璺熻釜鎺у埗鏇存柊 (楹﹁疆鍏ㄥ悜)
+ * @note  璁＄畻浣嶇疆鍋忓樊鍜岃?搴﹀亸宸?, 杈撳嚭 vx/vy/omega 涓変釜鎺у埗閲?
+ *
+ * 銆愭帶鍒剁瓥鐣ャ??
+ *  1. 鎵惧埌鏈?杩戣矾寰勭偣 + 鍓嶈?鐐?
+ *  2. 璁＄畻涓栫晫鍧愭爣绯诲亸宸? (dx, dy, dtheta)
+ *  3. 杞?崲鍒板簳鐩樺潗鏍囩郴鍋忓樊:
+ *       err_long =  dx*cos胃 + dy*sin胃   (杞﹀ご鏂瑰悜鍋忓樊)
+ *       err_lat  = -dx*sin胃 + dy*cos胃   (妯?悜鍋忓樊, 楹﹁疆鍙?洿鎺ユ礴Щ淇�姝?)
+ *  4. P鎺у埗杈撳嚭:
+ *       vy = KP_LONG * err_long
+ *       vx = KP_LAT  * err_lat          鈫? 楹﹁疆浼樺娍: 鐩存帴妯?Щ!
+ *       omega = KP_ANGLE * dtheta
+ *  5. 閫熷害闄愬箙鍚庤緭鍑?
+ */
+void Run_Nag_GPS(void)
+{
+    Nav_Odom_t* odom = &Nav_Odom;
+
+    if (Nav_PathCount == 0 || N.track_target_idx >= Nav_PathCount) {
+        // 鏃犺矾寰勬垨宸茶窇瀹?
+        N.Nag_Stop_f = true;
+        N.ctrl_vx = 0.0f;
+        N.ctrl_vy = 0.0f;
+        N.ctrl_omega = 0.0f;
+        return;
+    }
+
+    // 1. 鎵惧埌鏈?杩戠偣鍜屽墠瑙嗙偣
+    uint16_t nearest_idx = nav_find_nearest_point(odom->X, odom->Y);
+    uint16_t target_idx = nav_find_lookahead_point(nearest_idx, odom->X, odom->Y);
+    N.track_target_idx = nearest_idx;  // 鏇存柊褰撳墠杩涘害
+
+    NavPathPoint_t* target = &Nav_Path[target_idx];
+
+    // 2. 璁＄畻涓栫晫鍧愭爣绯诲亸宸?
+    float dx = target->X - odom->X;
+    float dy = target->Y - odom->Y;
+    float dtheta = target->Theta - odom->Theta;
+    dtheta = nav_angle_norm(dtheta);
+
+    // 妫?鏌ユ槸鍚﹀埌杈剧粓鐐?
+    float dist_to_end_x = Nav_Path[Nav_PathCount - 1].X - odom->X;
+    float dist_to_end_y = Nav_Path[Nav_PathCount - 1].Y - odom->Y;
+    float dist_to_end = sqrtf(dist_to_end_x * dist_to_end_x + dist_to_end_y * dist_to_end_y);
+
+    if (dist_to_end < NAV_ARRIVE_DIST && target_idx >= Nav_PathCount - 1) {
+        N.Nag_Stop_f = true;
+        N.ctrl_vx = 0.0f;
+        N.ctrl_vy = 0.0f;
+        N.ctrl_omega = 0.0f;
+        N.Final_Out = 0.0f;
+        return;
+    }
+
+    // 3. 杞?崲鍒板簳鐩樺潗鏍囩郴鍋忓樊
+    float c = cosf(odom->Theta);
+    float s = sinf(odom->Theta);
+    float err_long =  dx * c + dy * s;   // 绾靛悜鍋忓樊 (杞﹀ご鏂瑰悜)
+    float err_lat  = -dx * s + dy * c;   // 妯?悜鍋忓樊 (鍨傜洿杞﹀ご)
+
+    // 4. P鎺у埗璁＄畻鎺у埗閲?
+    float vy_cmd = NAV_KP_LONG * err_long;
+    float vx_cmd = NAV_KP_LAT  * err_lat;
+    float omega_cmd = NAV_KP_ANGLE * dtheta;
+
+    // 5. 閫熷害闄愬箙
+    float v_norm = sqrtf(vx_cmd * vx_cmd + vy_cmd * vy_cmd);
+    if (v_norm > NAV_MAX_VEL) {
+        float scale = NAV_MAX_VEL / v_norm;
+        vx_cmd *= scale;
+        vy_cmd *= scale;
+    }
+
+    if (omega_cmd >  NAV_MAX_OMEGA) omega_cmd =  NAV_MAX_OMEGA;
+    if (omega_cmd < -NAV_MAX_OMEGA) omega_cmd = -NAV_MAX_OMEGA;
+
+    // 6. 杈撳嚭鍒板?鑸?粨鏋勪綋
+    N.ctrl_vx = vx_cmd;
+    N.ctrl_vy = vy_cmd;
+    N.ctrl_omega = omega_cmd;
+    N.Final_Out = dtheta;  // 鍏煎?鏃ф帴鍙?
+}
+
+/*================== 瀵艰埅涓绘帶 ==================*/
+
+void Nag_Run(void)
+{
+    if (N.End_f == 1 && N.Save_state == 0) {
+        // 璁板綍缁撴潫, 淇濆瓨鏈?鍚庢暟鎹?
+        flash_Nag_Write();
+        N.Save_state = 1;
+        return;
+    }
+
+    if (N.Nag_Stop_f) {
+        N.ctrl_vx = 0.0f;
+        N.ctrl_vy = 0.0f;
+        N.ctrl_omega = 0.0f;
+        N.Final_Out = 0.0f;
+        Chassis_stop();
+        return;
+    }
+
+    // 鏍规嵁杩愯?妯″紡鎵ц?璁板綍鎴栬窡韪?
+    if (N.Save_state == 0 && N.End_f == 0) {
+        // 璁板綍妯″紡
+        Run_Nag_Save();
+    } else {
+        // 璺熻釜/鍥炴斁妯″紡
+        Run_Nag_GPS();
+        // 鐩存帴杈撳嚭鎺у埗閲忓埌搴曠洏 (楹﹁疆鍏ㄥ悜鎺у埗)
+        Chassis_Move(N.ctrl_vx, N.ctrl_vy, N.ctrl_omega);
+    }
+}
+
+void Nag_Read(void)
+{
+    switch(N.End_f)
+    {
+        case 0: Run_Nag_Save();
+            break;
+        case 1:
+            flash_Nag_Write();
+            N.End_f++;
+            break;
+        case 2:
+            N.End_f++;
+            break;
+    }
+}
+
+/*================== 鍒濆?鍖? ==================*/
+
+void Init_Nag(void)
+{
+    memset(&N, 0, sizeof(N));
+    N.Flash_page_index = Nag_Start_Page * FLASH_PAGE_SIZE;  // 淇??: 瀛楄妭鍋忕Щ
+    flash_buffer_clear();
+    Nav_PathCount = 0;
+    N.last_record_X = 0.0f;
+    N.last_record_Y = 0.0f;
+    N.track_target_idx = 0;
+}
+
+/*================== 绯荤粺璋冨害 ==================*/
+
+void Nag_System(void)
+{
+    if (!N.Nag_SystemRun_Index || N.Nag_Stop_f) return;
+
+    switch(N.Nag_SystemRun_Index)
+    {
+        case 1: Nag_Read();
+            break;
+        case 3: Nag_Run();
+            break;
+    }
+}
+
+/*================== Flash 璇诲啓閫傞厤 ==================*/
+
+/**
+ * @brief 浠嶧lash鍔犺浇璺?緞鐐瑰埌RAM
+ * @note  涓?娆℃?ц?鍙栨墍鏈夐〉鐨勮矾寰勭偣, 瑙ｆ瀽涓? Nav_Path[] 鏁扮粍
+ */
+void NagFlashRead(void)
+{
+    if (N.Save_state) return;
+
+    // 绗?0椤靛瓨浜? Save_index (鎬荤偣鏁?), 鍏堣?鍑烘潵
+    flash_buffer_clear();
+    flash_read_page_to_buffer(0, FLASH_PAGE_SIZE);
+    N.Save_index = flash_union_buffer[MAX_SIZE + 2];  // 瀛樺湪绗?102涓?綅缃?
+    uint16_t total_points = N.Save_index;
+    if (total_points > NAV_MAX_PATH_POINTS) total_points = NAV_MAX_PATH_POINTS;
+
+    flash_buffer_clear();
+
+    uint16_t points_loaded = 0;
+    uint16_t page = Nag_Start_Page;  // 椤电爜浠?45寮?濮嬮?掑噺
+
+    while (points_loaded < total_points && page >= Nag_End_Page) {
+        uint32_t offset = page * FLASH_PAGE_SIZE;
+
+        if (!flash_check(FLASH_USER_START_ADDR + offset)) {
+            // 璇ラ〉鏈夋暟鎹?, 璇诲彇
+            flash_read_page_to_buffer(offset, FLASH_PAGE_SIZE);
+
+            // 瑙ｆ瀽璺?緞鐐? (姣忕偣3涓猣loat)
+            for (uint16_t i = 0; i < NAV_POINTS_PER_PAGE && points_loaded < total_points; i++) {
+                Nav_Path[points_loaded].X     = *(float*)&flash_union_buffer[i * 3 + 0];
+                Nav_Path[points_loaded].Y     = *(float*)&flash_union_buffer[i * 3 + 1];
+                Nav_Path[points_loaded].Theta = *(float*)&flash_union_buffer[i * 3 + 2];
+                points_loaded++;
+            }
+            flash_buffer_clear();
+        }
+        page--;
+    }
+
+    Nav_PathCount = points_loaded;
+    N.Save_state = 1;
+    N.Nag_SystemRun_Index++;
+}
+
+/*================== Flash 璇诲啓 (瑙? flash.c) ==================*/
+// flash_Nag_Write() 鍜? flash_Nag_Read() 鍦? flash.c 涓?疄鐜?,
+// 宸蹭慨姝ｉ〉鍋忕Щbug骞堕?傞厤鏂拌矾寰勭偣鏍煎紡
+

@@ -1,0 +1,124 @@
+FILE: navigation.h
+Unrecoverable chars: 50
+BOM: True
+============================================================
+/*
+ * nagivation.h
+ *
+ *  Created on: 2024锟斤拷10锟斤拷16锟斤拷
+ *      Author: Monst
+ */
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifndef _NAVIGATION_H_
+#define _NAVIGATION_H_
+
+/*================== 鎯??浣嶅Э ==================*/
+
+#define NAV_PI  3.14159265f
+
+typedef struct {
+    float X;        // 涓栫晫鍧愭爣绯籜浣嶇疆 (m)
+    float Y;        // 涓栫晫鍧愭爣绯籝浣嶇疆 (m)
+    float Theta;    // 涓栫晫鍧愭爣绯昏埅鍚戣? (rad, 閫嗘椂閽堜负姝?)
+
+    float Vx_body;  // 搴曠洏妯?悜閫熷害 (m/s), 鍙充晶涓烘?
+    float Vy_body;  // 搴曠洏绾靛悜閫熷害 (m/s), 鍓嶆柟涓烘?
+    float Omega;    // 搴曠洏鏃嬭浆瑙掗?熷害 (rad/s), 閫嗘椂閽堜负姝?
+
+    float Vx_world; // 涓栫晫鍧愭爣绯籜鏂瑰悜閫熷害
+    float Vy_world;
+
+    float mileage;      // 鎬昏?椹堕噷绋? (m)
+    float Theta_imu;    // IMU鎻愪緵鐨勮埅鍚戣? (rad)
+    float Omega_imu;    // IMU鎻愪緵鐨勮?閫熷害 (rad/s)
+
+    uint32_t last_tick_ms;
+    uint8_t  is_inited;
+    uint8_t  use_imu_fusion; // 1:鍚?敤IMU铻嶅悎(鎺ㄨ崘), 0:绾?疆閫?
+} Nav_Odom_t;
+
+extern Nav_Odom_t Nav_Odom;
+
+void Nav_Odom_Init(void);
+void Nav_Odom_Update(void);
+void Nav_Odom_Reset(float x, float y, float theta);
+Nav_Odom_t* Nav_Get_Odom(void);
+
+/*================== 璺?緞鐐? ==================*/
+
+#define NAV_PATH_POINT_DIST  0.05f   // 璺?緞鐐归棿闅? 5cm
+#define NAV_MAX_PATH_POINTS  2000    // 鏈?澶ф敮鎸佺殑璺?緞鐐规暟 (绾?100m)
+#define NAV_POINTS_PER_PAGE  150     // 姣廎lash椤靛瓨150涓?偣 (150*3*4=1800 bytes)
+
+typedef struct {
+    float X;
+    float Y;
+    float Theta;
+} NavPathPoint_t;
+
+extern NavPathPoint_t Nav_Path[NAV_MAX_PATH_POINTS];
+extern uint16_t Nav_PathCount;  // 褰撳墠鏈夋晥璺?緞鐐规暟
+
+/*================== 瀵艰埅鎺у埗鍙傛暟 ==================*/
+
+#define NAV_KP_LONG   2.0f   // 绾靛悜鍋忓樊澧炵泭 (杞﹀ご鏂瑰悜)
+#define NAV_KP_LAT    3.0f   // 妯?悜鍋忓樊澧炵泭 (鍨傜洿杞﹀ご鏂瑰悜, 楹﹁疆妯?Щ鐢?)
+#define NAV_KP_ANGLE  2.5f   // 瑙掑害鍋忓樊澧炵泭
+#define NAV_MAX_VEL   0.5f   // 瀵艰埅杈撳嚭閫熷害闄愬箙 (m/s)
+#define NAV_MAX_OMEGA 2.0f   // 瀵艰埅杈撳嚭瑙掗?熷害闄愬箙 (rad/s)
+#define NAV_ARRIVE_DIST 0.03f // 鍒拌揪鍒ゅ畾璺濈? (3cm)
+
+/*================== Flash 鐩稿叧 ==================*/
+
+#define MaxSize 500    //flash瀛樺偍鐐归樀鏁版嵁椤垫暟 (鍏煎?鏃у畾涔?, 瀹為檯鐢∟AV_POINTS_PER_PAGE)
+
+#define Read_MaxSize 10000//璇诲彇鐢ㄨ?瀹?
+
+#define Nag_End_Page 1
+#define Nag_Start_Page 45
+
+/*================== 瀵艰埅鐘舵?佺粨鏋勪綋 ==================*/
+
+typedef struct{
+    // 鎺у埗杈撳嚭 (渚涗笂灞傛垨鐩存帴璋冪敤搴曠洏)
+    float Final_Out;    // 瑙掑害鍋忓樊 (鍏煎?鏃ф帴鍙?, rad)
+    float ctrl_vx;      // 妯?悜閫熷害杈撳嚭 (m/s)
+    float ctrl_vy;      // 绾靛悜閫熷害杈撳嚭 (m/s)
+    float ctrl_omega;   // 鏃嬭浆瑙掗?熷害杈撳嚭 (rad/s)
+
+    // 璺?緞璺熻釜鐘舵??
+    bool Nag_Stop_f;
+    uint8_t Flash_read_f;
+    uint16_t size;
+    uint16_t Run_index;
+    uint16_t Save_count;
+    uint16_t Save_index;    // 鎬昏矾寰勭偣鏁?
+    uint8_t Save_state;
+    uint8_t End_f;
+
+    // Flash鐩稿叧
+    uint8_t Flash_page_index;
+    uint8_t Flash_Save_Page_Index;
+    uint8_t Nag_SystemRun_Index;
+
+    // 璁板綍/璺熻釜杈呭姪
+    float last_record_X;
+    float last_record_Y;
+    uint16_t track_target_idx;  // 褰撳墠璺熻釜鐨勭洰鏍囩偣绱㈠紩
+} Nag;
+
+extern Nag N;
+
+/*================== 瀵艰埅鎺ュ彛 ==================*/
+
+void Nag_Run(void);         // 瀵艰埅涓绘帶鍑芥暟 (璁板綍鎴栬窡韪?)
+void Run_Nag_GPS(void);     // 璺?緞璺熻釜鏇存柊
+void Run_Nag_Save(void);    // 璺?緞璁板綍鏇存柊
+void Nag_Read(void);        // 瀵艰埅鐘舵?佹満
+void Init_Nag(void);        // 瀵艰埅鍒濆?鍖?
+void Nag_System(void);      // 瀵艰埅绯荤粺璋冨害
+void NagFlashRead(void);    // 浠嶧lash鍔犺浇璺?緞
+
+#endif /* _NAVIGATION_H_ */

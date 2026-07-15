@@ -9,21 +9,6 @@
 #define CHASSIS_LENGTH      0.22f       // 前后轮距 (m)
 #define CHASSIS_WHEEL_DIA   0.08f       // 轮子直径 (m)
 
-/*================== 电机与底盘数据结构 ==================*/
-
-typedef struct{
-    float M1_S;
-    float M2_S;
-    float M3_S;
-    float M4_S;
-    float M1_V;
-    float M2_V;
-    float M3_V;
-    float M4_V;//四个电机里程计数和速度计数
-}Car_Param;
-
-extern Car_Param Car;
-
 /*================== 底盘运动控制接口 ==================*/
 
 /**
@@ -43,11 +28,7 @@ void Chassis_Setdefaultspeed(float v);
  * @param vy    纵向速度 (m/s), 前方为正
  * @param omega 旋转角速度 (rad/s), 逆时针为正
  *
- * @note  这是统一的速度控制接口, 替代原来的 Goahead/Golateral/Rotate/Move_Line 等分散函数
- *        例: 前进 1m/s          → Chassis_Move(0,  1.0f, 0)
- *            右移 0.5m/s        → Chassis_Move(0.5f, 0,  0)
- *            顺时针旋转 1rad/s  → Chassis_Move(0,  0,  -1.0f)
- *            同时前进+旋转      → Chassis_Move(0,  1.0f, -1.0f)
+ * @note  这是统一的速度控制接口
  */
 void Chassis_Move(float vx, float vy, float omega);
 
@@ -96,7 +77,6 @@ void Chassis_GetBodySpeed(float *vx, float *vy, float *omega);
 /*================== 测试/任务函数 ==================*/
 
 void Chassis_Test(void);
-void Task(uint16_t RBG);
 
 
 #endif

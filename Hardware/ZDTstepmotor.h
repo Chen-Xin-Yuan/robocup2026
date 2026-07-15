@@ -7,19 +7,18 @@
 #include "motor_def.h"
 #include "main.h"
 
-/* 外部全局电机定义 (定义在 Chassis.c) */
+/* 外部全局电机定义 */
 extern StepMotorZDT_t Motor1, Motor2, Motor3, Motor4;
 
 typedef struct
 {
-    uint32_t id; // 程序中的id,用于其它模块访问该电机模块
-    uint32_t id_protocol; // 电机的协议id
+    uint8_t id; // 程序中的id,用于其它模块访问该电机模块
     //最大值限制
     float velocity_lim;
     float iq_lim;
     
     //实际
-    float real_velocity; // rad/s
+    float real_velocity; // m/s
     float real_deg_pos; // (rad)
     float real_current; // (A)
     int16_t real_rpm; // r/min
@@ -40,14 +39,10 @@ typedef struct
     bool    _have_pub_permission; // 是否有发布权限
     uint8_t _cmd_buffer[20];    // 命令缓冲区
 
-    // /*==== 真实反馈数据  ====*/
-    // int16_t  _real_rpm;          // 电机回传的实际转速 (RPM), 有方向
-    // float    _real_linear_speed; // 实际线速度 (m/s), 由 _real_rpm 换算
-    // int32_t  _encoder_value;     // 编码器累计值 (脉冲数, 带方向), 功能码0x30
     uint32_t _last_query_tick;   // 上次查询的时间戳 (ms), 用于轮询间隔控制
 } StepMotorZDT_t;
 
-void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint32_t id ,UART_HandleTypeDef *_USART,int8_t _dir, float _wheel_diameter,
+void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint8_t id ,UART_HandleTypeDef *_USART,int8_t _dir, float _wheel_diameter,
      bool _have_pub_permission);
 
 void set_speed_target(StepMotorZDT_t *zdt_motor, float target);

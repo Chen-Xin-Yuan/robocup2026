@@ -11,7 +11,7 @@
 /*================== 全局变量 ==================*/
 
 StepMotorZDT_t Motor1, Motor2, Motor3, Motor4;
-Car_Param Car;
+
 
 static float wheel_perimeter = 0.0f;
 static float rotate_radius = 0.0f;
@@ -145,6 +145,9 @@ void Chassis_Set4MotorSpeed(float v1, float v2, float v3, float v4)
 
 /*================== 位置控制 (统一接口) ==================*/
 
+/**
+ * @brief 输入目标底盘位移 (sx, sy) + 旋转角度 (theta_deg)，输出预计执行时间 (s)
+ */
 float Chassis_MovePos(float sx, float sy, float theta_deg)
 {
     float theta_rad = theta_deg * CHASSIS_PI / 180.0f;
@@ -167,9 +170,9 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     set_speed_pos_target(&Motor1, s1 / t, s1);
     set_speed_pos_target(&Motor2, s2 / t, s2);
     set_speed_pos_target(&Motor3, s3 / t, s3);
-    set_speed_pos_target(&Motor4, s4 / t, s4);
+    set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
-    return t;
+    return (t+0.3f); // 预计执行时间 + 0.3s 缓冲
 }
 
 /*================== 状态查询 ==================*/
@@ -187,10 +190,10 @@ float Chassis_GetLinearSpeed(uint8_t motor_ID)
 
 void Chassis_GetSpeed(void)
 {
-    Car.M1_V = get_linear_speed(&Motor1);
-    Car.M2_V = get_linear_speed(&Motor2);
-    Car.M3_V = get_linear_speed(&Motor3);
-    Car.M4_V = get_linear_speed(&Motor4);
+    Motor1.motor_controller_t.real_velocity = get_linear_speed(&Motor1);
+    Motor2.motor_controller_t.real_velocity = get_linear_speed(&Motor2);
+    Motor3.motor_controller_t.real_velocity = get_linear_speed(&Motor3);
+    Motor4.motor_controller_t.real_velocity = get_linear_speed(&Motor4);
 }
 
 /**
@@ -224,7 +227,3 @@ void Chassis_Test(void)
     HAL_Delay((uint32_t)(t * 1000.0f + 500.0f));
 }
 
-void Task(uint16_t RBG)
-{
-    (void)RBG;
-}

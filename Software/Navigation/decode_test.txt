@@ -1,0 +1,65 @@
+Testing bytes: e98eafee889aee87b1e6b5a3e5b685d0ad
+
+gbk: "ERROR: 'gbk' codec can't decode byte 0xaf in position 2: illegal multibyte sequence"
+gb2312: "ERROR: 'gb2312' codec can't decode byte 0xe9 in position 0: illegal multibyte sequence"
+big5: "ERROR: 'big5' codec can't decode byte 0xe9 in position 0: illegal multibyte sequence"
+shift_jis: "ERROR: 'shift_jis' codec can't decode byte 0xee in position 3: illegal multibyte sequence"
+euc-jp: "ERROR: 'euc_jp' codec can't decode byte 0xe9 in position 0: illegal multibyte sequence"
+euc-kr: "ERROR: 'euc_kr' codec can't decode byte 0xe9 in position 0: illegal multibyte sequence"
+latin-1: 'é\x8e¯î\x88\x9aî\x87±æµ£å¶\x85Ð\xad'
+cp1252: 'éŽ¯îˆšî‡±æµ£å¶…Ð\xad'
+
+=== GBK 2-byte chunks ===
+e98e -> 閹
+afee -> ERROR: 'gbk' codec can't decode byte 0xaf in position 0: illegal multibyte sequence
+889a -> 垰
+ee87 -> 顕
+b1e6 -> 辨
+b5a3 -> 担
+e5b6 -> 宥
+85d0 -> 呅
+
+=== GBK variable-length chunks ===
+e98e -> 閹
+af -> ¯
+ee88 -> 顖
+9aee -> 氼
+87b1 -> 嚤
+e6b5 -> 娴
+a3e5 -> ｅ
+b685 -> 秴
+d0ad -> 协
+
+
+=== Full navigation.h recovery attempts ===
+UTF-8 decode (replace): '/*\r\n * nagivation.h\r\n *\r\n *  Created on: 2024锟斤拷10锟斤拷16锟斤拷\r\n *      Author: Monst\r\n */\r\n#include <stdbool.h>\r\n#include <stdint.h>\r\n\r\n#ifndef _NAVIGATION_H_\r\n#define _NAVIGATION_H_\r\n\r\n/*==============='
+
+Non-ASCII chars: 533
+Unique non-ASCII: ['Щ', 'Э', 'у', 'ф', '€', '∟', 'ご', 'ゅ', 'ュ', 'ㄨ', '㈠', '佹', '佺', '偍', '偣', '傛', '傜', '充', '冨', '冪', '勪', '勭', '勮', '叧', '呭', '嗘', '噷', '嚭', '囩', '垨', '垫', '埅', '埗', '堕', '堜', '墠', '夋', '妯', '姝', '姣', '姪', '嬭', '存', '害', '寰', '崘', '嵁', '嶅', '嶆', '嶇', '嶧', '帴', '帶', '廎', '彇', '归', '彛', '忓', '悎', '悜', '愪', '愬', '愭', '戣', '拌', '拷', '掑', '掗', '揪', '搴', '撳', '敤', '敮', '斤', '昏', '晥', '晫', '晶', '暟', '曠', '杈', '杞', '板', '柊', '柟', '栫', '栬', '棿', '椂', '椤', '椹', '楹', '樀', '樊', '樺', '檯', '殑', '泭', '洏', '洰', '洿', '浆', '浇', '浠', '浣', '涓', '涔', '涗', '渚', '満', '澧', '澶', '濆', '濈', '瀛', '瀵', '瀹', '灞', '炵', '為', '烘', '煎', '熷', '熻', '爣', '版', '犺', '瑙', '瑰', '璁', '璇', '璋', '璺', '瓨', '畾', '疆', '矾', '稿', '窡', '笂', '箙', '籜', '籝', '粨', '粺', '紩', '綋', '綍', '緞', '緵', '绋', '绘', '绯', '绱', '绾', '舵', '艰', '芥', '荤', '褰', '规', '诲', '负', '釜', '鍋', '鍏', '鍑', '鍒', '鍓', '鍔', '鍖', '鍙', '鍚', '鍧', '鍨', '鎬', '鎯', '鎴', '鎸', '鎺', '鎻', '鏁', '鏂', '鏃', '鏇', '鏈', '鏋', '鏍', '鐐', '鐘', '鐢', '鐨', '鐩', '铻', '锟', '閫', '閽', '闄', '闅', '靛', '韪', '\ue044', '\ue046', '\ue11c', '\ue190', '\ue195', '\ue1f1', '\ue21a', '\ue21c', '\ue21d', '\ue511', '\ue750', '\ue757', '\ue787', '﹀', '﹁', '�']
+
+Mixed approach decode as GBK:
+/*
+ * nagivation.h
+ *
+ *  Created on: 2024锟斤拷10锟斤拷16锟斤拷
+ *      Author: Monst
+ */
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifndef _NAVIGATION_H_
+#define _NAVIGATION_H_
+
+/*================== 鎯??浣嶅Э ==================*/
+
+#define NAV_PI  3.14159265f
+
+typedef struct {
+    float X;        // 涓栫晫鍧愭爣绯籜浣嶇疆 (m)
+    float Y;        // 涓栫晫鍧愭爣绯籝浣嶇疆 (m)
+    float Theta;    // 涓栫晫鍧愭爣绯昏埅鍚戣? (rad, 閫嗘椂閽堜负姝?)
+
+    float Vx_body;  // 搴曠洏妯?悜閫熷害 (m/s), 鍙充晶涓烘?
+    float Vy_body;  // 搴曠洏绾靛悜閫熷害 
+CJK chars count: 465
+CJK chars: 锟斤拷锟斤拷锟斤拷鎯浣嶅涓栫晫鍧愭爣绯籜浣嶇疆涓栫晫鍧愭爣绯籝浣嶇疆涓栫晫鍧愭爣绯昏埅鍚戣閫嗘椂閽堜

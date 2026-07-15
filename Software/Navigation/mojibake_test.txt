@@ -1,0 +1,31 @@
+Text: 锟斤拷
+UTF-8 bytes: e9949fe696a4e68bb7
+Length: 9 bytes
+GBK decode error: 'gbk' codec can't decode byte 0xb7 in position 8: incomplete multibyte sequence
+GBK decode (replace): 閿熸枻鎷�
+
+Text: 閿熸枻鎷�
+UTF-8 bytes: e996bfe786b8e69ebbe98eb7efbfbd
+Length: 15 bytes
+GBK decode error: 'gbk' codec can't decode byte 0xbd in position 14: incomplete multibyte sequence
+GBK decode (replace): 闁跨喐鏋婚幏锟�
+
+=== Reverse engineering 锟斤拷 ===
+锟斤拷 as GBK bytes: efbfbdefbfbd
+GBK bytes as UTF-8: ��
+
+=== 年 corruption chain ===
+Original: 年, UTF-8: e5b9b4
+UTF-8 bytes as GBK: '骞�'
+Saved as UTF-8: e9aa9eefbfbd
+Final text: 骞�
+
+=== Full string corruption ===
+Original: 定位姿态, UTF-8: e5ae9ae4bd8de5a7bfe68081
+As GBK: '瀹氫綅濮挎��'
+Saved as UTF-8: e780b9e6b0abe7b685e6bfaee68c8eefbfbdefbfbd
+Final text: 瀹氫綅濮挎��
+
+Recovery attempt:
+Recovered bytes: e5ae9ae4bd8de5a7bfe63f3f
+Recovered as UTF-8: 定位姿�??

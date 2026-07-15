@@ -1,0 +1,123 @@
+Full GBK decode error: 'gbk' codec can't decode byte 0xb7 in position 53: illegal multibyte sequence
+GBK decode with replace, length: 3610
+
+/*
+ * nagivation.h
+ *
+ *  Created on: 2024閿熸枻鎷�10閿熸枻鎷�16閿熸枻鎷�
+ *      Author: Monst
+ */
+#include <stdbool.h>
+#include <stdint.h>
+
+#ifndef _NAVIGATION_H_
+#define _NAVIGATION_H_
+
+/*================== 閹�顖氼嚤娴ｅ秴协 ==================*/
+
+#define NAV_PI  3.14159265f
+
+typedef struct {
+    float X;        // 娑撴牜鏅�閸ф劖鐖ｇ化绫滄担宥囩枂 (m)
+    float Y;        // 娑撴牜鏅�閸ф劖鐖ｇ化绫濇担宥囩枂 (m)
+    float Theta;    // 娑撴牜鏅�閸ф劖鐖ｇ化鏄忓焻閸氭垼顫� (rad, 闁�鍡樻�傞柦鍫滆礋濮濓拷)
+
+    float Vx_body;  // 鎼存洜娲忓Ο顏勬倻闁�鐔峰�� (m/s), 閸欏厖鏅舵稉鐑橆劀
+    float Vy_body;  // 鎼存洜娲忕痪闈涙倻闁�鐔峰�� (m/s), 閸撳秵鏌熸稉鐑橆劀
+    float Omega;    // 鎼存洜娲忛弮瀣�娴嗙憴鎺椻偓鐔峰�� (rad/s), 闁�鍡樻�傞柦鍫滆礋濮濓拷
+
+    float Vx_world; // 娑撴牜鏅�閸ф劖鐖ｇ化绫滈弬鐟版倻闁�鐔峰��
+    float Vy_world;
+
+    float mileage;      // 閹�鏄忣攽妞瑰爼鍣风粙锟� (m)
+    float Theta_imu;    // IMU閹绘劒绶甸惃鍕�鍩呴崥鎴ｎ潡 (rad)
+    float Omega_imu;    // IMU閹绘劒绶甸惃鍕�顫楅柅鐔峰�� (rad/s)
+
+    uint32_t last_tick_ms;
+    uint8_t  is_inited;
+    uint8_t  use_imu_fusion; // 1:閸氼垳鏁�IMU閾诲秴鎮�(閹恒劏宕�), 0:缁绢垵鐤嗛柅锟�
+} Nav_Odom_t;
+
+extern Nav_Odom_t Nav_Odom;
+
+void Nav_Odom_Init(void);
+void Nav_Odom_Update(void);
+void Nav_Odom_Reset(float x, float y, float theta);
+Nav_Odom_t* Nav_Get_Odom(void);
+
+/*================== 鐠侯垰绶為悙锟� ==================*/
+
+#define NAV_PATH_POINT_DIST  0.05f   // 鐠侯垰绶為悙褰掓？闂咃拷 5cm
+#define NAV_MAX_PATH_POINTS  2000    // 閺堚偓婢堆勬暜閹镐胶娈戠捄顖氱窞閻愯�勬殶 (缁撅拷100m)
+#define NAV_POINTS_PER_PAGE  150     // 濮ｅ粠lash妞ら潧鐡�150娑擃亞鍋� (150*3*4=1800 bytes)
+
+typedef struct {
+    float X;
+    float Y;
+    float Theta;
+} NavPathPoint_t;
+
+extern NavPathPoint_t Nav_Path[NAV_MAX_PATH_POINTS];
+extern uint16_t Nav_PathCount;  // 瑜版挸澧犻張澶嬫櫏鐠侯垰绶為悙瑙勬殶
+
+/*================== 鐎佃壈鍩呴幒褍鍩楅崣鍌涙殶 ==================*/
+
+#define NAV_KP_LONG   2.0f   // 缁鹃潧鎮滈崑蹇撴▕婢х偟娉� (鏉烇箑銇旈弬鐟版倻)
+#define NAV_KP_LAT    3.0f   // 濡�顏勬倻閸嬪繐妯婃晶鐐垫抄 (閸ㄥ倻娲挎潪锕�銇旈弬鐟版倻, 妤癸箒鐤嗗Ο顏喰╅悽锟�)
+#define NAV_KP_ANGLE  2.5f   // 鐟欐帒瀹抽崑蹇撴▕婢х偟娉�
+#define NAV_MAX_VEL   0.5f   // 鐎佃壈鍩呮潏鎾冲毉闁�鐔峰�抽梽鎰�绠� (m/s)
+#define NAV_MAX_OMEGA 2.0f   // 鐎佃壈鍩呮潏鎾冲毉鐟欐帡鈧�鐔峰�抽梽鎰�绠� (rad/s)
+#define NAV_ARRIVE_DIST 0.03f // 閸掓媽鎻�閸掋倕鐣剧捄婵堫瀲 (3cm)
+
+/*================== Flash 閻╃�垮彠 ==================*/
+
+#define MaxSize 500    //flash鐎涙ê鍋嶉悙褰掓█閺佺増宓佹い鍨�鏆� (閸忕厧顔愰弮褍鐣炬稊锟�, 鐎圭偤妾�閻⑩垷AV_POINTS_PER_PAGE)
+
+#define Read_MaxSize 10000//鐠囪�插絿閻�銊�顔曠�癸拷
+
+#define Nag_End_Page 1
+#define Nag_Start_Page 45
+
+/*================== 鐎佃壈鍩呴悩鑸碘偓浣虹波閺嬪嫪缍� ==================*/
+
+typedef struct{
+    // 閹貉冨煑鏉堟挸鍤� (娓氭稐绗傜仦鍌涘灗閻╁瓨甯寸拫鍐�鏁ゆ惔鏇犳磸)
+    float Final_Out;    // 鐟欐帒瀹抽崑蹇撴▕ (閸忕厧顔愰弮褎甯撮崣锟�, rad)
+    float ctrl_vx;      // 濡�顏勬倻闁�鐔峰�虫潏鎾冲毉 (m/s)
+    float ctrl_vy;      // 缁鹃潧鎮滈柅鐔峰�虫潏鎾冲毉 (m/s)
+    float ctrl_omega;   // 閺冨��娴嗙憴鎺椻偓鐔峰�虫潏鎾冲毉 (rad/s)
+
+    // 鐠侯垰绶炵捄鐔婚嚋閻樿埖鈧�锟�
+    bool Nag_Stop_f;
+    uint8_t Flash_read_f;
+    uint16_t size;
+    uint16_t Run_index;
+    uint16_t Save_count;
+    uint16_t Save_index;    // 閹�鏄忕熅瀵板嫮鍋ｉ弫锟�
+    uint8_t Save_state;
+    uint8_t End_f;
+
+    // Flash閻╃�垮彠
+    uint8_t Flash_page_index;
+    uint8_t Flash_Save_Page_Index;
+    uint8_t Nag_SystemRun_Index;
+
+    // 鐠佹澘缍�/鐠虹喕閲滄潏鍛�濮�
+    float last_record_X;
+    float last_record_Y;
+    uint16_t track_target_idx;  // 瑜版挸澧犵捄鐔婚嚋閻ㄥ嫮娲伴弽鍥╁仯缁便垹绱�
+} Nag;
+
+extern Nag N;
+
+/*================== 鐎佃壈鍩呴幒銉ュ經 ==================*/
+
+void Nag_Run(void);         // 鐎佃壈鍩呮稉缁樺付閸戣姤鏆� (鐠佹澘缍嶉幋鏍�绐￠煪锟�)
+void Run_Nag_GPS(void);     // 鐠侯垰绶炵捄鐔婚嚋閺囧瓨鏌�
+void Run_Nag_Save(void);    // 鐠侯垰绶炵拋鏉跨秿閺囧瓨鏌�
+void Nag_Read(void);        // 鐎佃壈鍩呴悩鑸碘偓浣规簚
+void Init_Nag(void);        // 鐎佃壈鍩呴崚婵嗩潗閸栵拷
+void Nag_System(void);      // 鐎佃壈鍩呯化鑽ょ埠鐠嬪啫瀹�
+void NagFlashRead(void);    // 娴犲锭lash閸旂姾娴囩捄顖氱窞
+
+#endif /* _NAVIGATION_H_ */

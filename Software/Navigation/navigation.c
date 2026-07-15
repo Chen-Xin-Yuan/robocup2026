@@ -1,14 +1,14 @@
 /*
 * navigation.c
 *
-*  Created on: 2024��10��16��
-*      Author: Monst
+*  Created on: 2026年8月10日
+*      Author: 陈信沅
 *
-*  【重构说明】适配麦轮底盘全向惯导导航
-*  1. 惯导位姿(Nav_Odom_t)从Chassis.c迁移至此, 统一管理世界坐标X,Y,Theta
-*  2. IMU融合: 用IMU的yaw角直接替换轮速积分的航向角, 消除漂移
-*  3. 路径记录: 从存"里程+yaw"改为存"X,Y,Theta"路径点, 支持横移/斜走记录
-*  4. 路径跟踪: 麦轮全向控制, 同时输出vx/vy/omega, 利用横移修正横向偏差
+*  适配麦克纳姆轮全向小车导航
+*  1. 导航位姿(Nav_Odom_t)依然由chassis.c传递至此，统一管理世界坐标X,Y,Theta
+*  2. IMU融合：使用IMU原始角度直接替换轮速积分的航向角，消除漂移
+*  3. 路径记录：由存储"里程+yaw"改为存储"X,Y,Theta"路径点，支持横移/斜走记录
+*  4. 路径跟踪：麦克纳姆全向控制，同时输出vx/vy/omega，利用横移修正侧向偏差
 */
 
 #include "stm32f4xx_hal.h"
@@ -27,14 +27,14 @@ uint16_t Nav_PathCount = 0;
 
 Nag N;
 
-// 兼容旧接口, 但不再作为主要存储
+// 兼容旧接口，但不再作为主要存储
 int32_t Nav_read[Read_MaxSize];
 
-/*================== Flash 页大小修正 ==================*/
+/*================== Flash 页面大小修正 ==================*/
 #define FLASH_PAGE_SIZE  2048
 #define NAV_LOOK_AHEAD_DIST 0.05f
 
-/*================== 惯导位姿估计 ==================*/
+/*================== 导航位姿估计 ==================*/
 
 /**
  * @brief 角度归一化到 [-PI, +PI]
@@ -47,7 +47,7 @@ static float nav_angle_norm(float angle)
 }
 
 /**
- * @brief 底盘坐标系速度 → 世界坐标系速度
+ * @brief 底盘坐标系速度 -> 世界坐标系速度
  */
 static void nav_body_to_world(float vx, float vy, float theta,
                                float *vx_w, float *vy_w)
@@ -63,7 +63,7 @@ void Nav_Odom_Init(void)
     memset(&Nav_Odom, 0, sizeof(Nav_Odom_t));
     Nav_Odom.last_tick_ms = HAL_GetTick();
     Nav_Odom.is_inited = 1;
-    Nav_Odom.use_imu_fusion = 1;    // 默认启用IMU融合
+    Nav_Odom.use_imu_fusion = 1; //使用imu融合(默认使用imu融合)
 }
 
 void Nav_Odom_Reset(float x, float y, float theta)
@@ -86,14 +86,14 @@ Nav_Odom_t* Nav_Get_Odom(void)
 }
 
 /**
- * @brief 惯导位姿更新 (核心函数)
- * @note  建议在 1ms~10ms 周期任务中调用
+ * @brief 
+ * @note  
  *
  * 【流程】
  *  1. 调用 Chassis_GetBodySpeed() 获取底盘坐标系速度 (vx_body, vy_body)
  *  2. 调用 Kalman_GetYawRad() / Kalman_GetYawOmegaRad() 获取IMU数据
- *  3. 融合: Theta/Omega 取IMU (无漂移), 位置由轮速积分
- *  4. 坐标转换: 底盘速度 → 世界坐标系速度 (用融合后的Theta)
+ *  3. 融合: Theta/Omega 使用IMU (无漂移), 位置由轮速积分
+ *  4. 坐标转换: 底盘速度 -> 世界坐标系速度 (使用融合后的Theta)
  *  5. 积分更新 X, Y, mileage
  */
 void Nav_Odom_Update(void)
@@ -104,28 +104,27 @@ void Nav_Odom_Update(void)
     }
 
     uint32_t now_ms = HAL_GetTick();
-    float dt = (now_ms - Nav_Odom.last_tick_ms) * 0.001f;
+    float dt = (now_ms - Nav_Odom.last_tick_ms) * 0.001f;//单位换算ms-->s
 
     if (dt > 0.1f || dt <= 0.0f) {
         Nav_Odom.last_tick_ms = now_ms;
         return;
-    }
+    }// 过长的dt可能是系统卡顿或首次调用，直接跳过积分
 
-    // 1. 获取底盘坐标系速度 (实时正解算, 不依赖全局状态)
+    // 1.获取底盘坐标系速度
     float vx_body, vy_body, omega_wheel;
     Chassis_GetBodySpeed(&vx_body, &vy_body, &omega_wheel);
 
     Nav_Odom.Vx_body = vx_body;
     Nav_Odom.Vy_body = vy_body;
-
-    // 2. 获取IMU数据
+    // 2.获取imu数据
     float theta_imu = Kalman_GetYawRad();
     float omega_imu = Kalman_GetYawOmegaRad();
 
     Nav_Odom.Theta_imu = theta_imu;
     Nav_Odom.Omega_imu = omega_imu;
 
-    // 3. 【惯导融合核心】
+    // 3. 融合数据（角速度和角度用imu获取）
     if (Nav_Odom.use_imu_fusion) {
         Nav_Odom.Theta = theta_imu;
         Nav_Odom.Omega = omega_imu;
@@ -134,7 +133,7 @@ void Nav_Odom_Update(void)
         Nav_Odom.Theta = nav_angle_norm(Nav_Odom.Theta + omega_wheel * dt);
     }
 
-    // 4. 坐标转换: 底盘 → 世界
+    // 4. 坐标转换: 底盘 -> 世界
     float vx_world, vy_world;
     nav_body_to_world(vx_body, vy_body, Nav_Odom.Theta, &vx_world, &vy_world);
 
@@ -156,24 +155,24 @@ void Nav_Odom_Update(void)
 
 /**
  * @brief 路径记录更新
- * @note  每走 NAV_PATH_POINT_DIST (5cm) 记录一个 (X,Y,Theta) 路径点
+ * @note  每行走 NAV_PATH_POINT_DIST (5cm) 记录一个 (X,Y,Theta) 路径点
  *
  * 【与旧代码区别】
- *  旧: 每走固定里程记录一个 yaw 角 (假设全程前进)
- *  新: 用欧氏距离判断, 记录完整位姿 (X,Y,Theta), 支持横移/斜走
+ *  旧: 每行走固定里程记录一个 yaw 角 (假设全程前进)
+ *  新: 使用欧式距离判断，记录完整位姿 (X,Y,Theta), 支持横移/斜走
  */
 void Run_Nag_Save(void)
 {
     Nav_Odom_t* odom = &Nav_Odom;
 
-    // 计算与上一个记录点的欧氏距离
+    // 计算与上一个记录点的欧式距离
     float dx = odom->X - N.last_record_X;
     float dy = odom->Y - N.last_record_Y;
     float dist = sqrtf(dx * dx + dy * dy);
 
     if (dist >= NAV_PATH_POINT_DIST) {
         if (Nav_PathCount >= NAV_MAX_PATH_POINTS) {
-            // 路径点已满, 标记结束
+            // 路径点已满，标记结束
             N.End_f = 1;
             return;
         }
@@ -194,7 +193,7 @@ void Run_Nag_Save(void)
         N.last_record_X = odom->X;
         N.last_record_Y = odom->Y;
 
-        // 当前页满, 写入Flash (结束时的写入由 Nag_Run/Nag_Read 统一处理)
+        // 当前页面写满，写入Flash (结束时的写入由 Nag_Run/Nag_Read 统一处理)
         if ((Nav_PathCount % NAV_POINTS_PER_PAGE) == 0) {
             flash_Nag_Write();
         }
@@ -204,14 +203,14 @@ void Run_Nag_Save(void)
 /*================== 路径跟踪 ==================*/
 
 /**
- * @brief 找到离当前位置最近的路径点索引
+ * @brief 找到距离当前位置最近的路径点索引
  */
 static uint16_t nav_find_nearest_point(float x, float y)
 {
     uint16_t nearest_idx = N.track_target_idx;
     float min_dist_sq = 1e10f;
 
-    // 从当前跟踪索引附近搜索, 避免回退
+    // 从当前跟踪索引附近搜索，避免回环
     uint16_t start = N.track_target_idx;
     uint16_t end = Nav_PathCount;
     if (end > start + 50) end = start + 50; // 最多向前看50个点
@@ -230,7 +229,7 @@ static uint16_t nav_find_nearest_point(float x, float y)
 
 /**
  * @brief 找到前视目标点索引
- * @note  从最近点向前搜索, 找到距离当前位置约 NAV_LOOK_AHEAD_DIST 的点
+ * @note  从最近点向前搜索，找到距离当前位置大于等于 NAV_LOOK_AHEAD_DIST 的点
  */
 static uint16_t nav_find_lookahead_point(uint16_t nearest_idx, float x, float y)
 {
@@ -244,23 +243,23 @@ static uint16_t nav_find_lookahead_point(uint16_t nearest_idx, float x, float y)
             return i;
         }
     }
-    // 如果到终点都不够前视距离, 返回最后一个点
+    // 如果到终点都不足前视距离，返回最后一个点
     return (Nav_PathCount > 0) ? (Nav_PathCount - 1) : 0;
 }
 
 /**
- * @brief 路径跟踪控制更新 (麦轮全向)
- * @note  计算位置偏差和角度偏差, 输出 vx/vy/omega 三个控制量
+ * @brief 路径跟踪控制更新 (麦克纳姆全向)
+ * @note  计算位置偏差和角度偏差，输出 vx/vy/omega 三个控制量
  *
  * 【控制策略】
  *  1. 找到最近路径点 + 前视点
  *  2. 计算世界坐标系偏差 (dx, dy, dtheta)
  *  3. 转换到底盘坐标系偏差:
  *       err_long =  dx*cosθ + dy*sinθ   (车头方向偏差)
- *       err_lat  = -dx*sinθ + dy*cosθ   (横向偏差, 麦轮可直接横移修正)
+ *       err_lat  = -dx*sinθ + dy*cosθ   (侧向偏差, 麦克纳姆可直接横移修正)
  *  4. P控制输出:
  *       vy = KP_LONG * err_long
- *       vx = KP_LAT  * err_lat          ← 麦轮优势: 直接横移!
+ *       vx = KP_LAT  * err_lat          -> 麦克纳姆优势: 直接横移!
  *       omega = KP_ANGLE * dtheta
  *  5. 速度限幅后输出
  */
@@ -269,7 +268,7 @@ void Run_Nag_GPS(void)
     Nav_Odom_t* odom = &Nav_Odom;
 
     if (Nav_PathCount == 0 || N.track_target_idx >= Nav_PathCount) {
-        // 无路径或已跑完
+        // 无路径或已经跑完
         N.Nag_Stop_f = true;
         N.ctrl_vx = 0.0f;
         N.ctrl_vy = 0.0f;
@@ -290,7 +289,7 @@ void Run_Nag_GPS(void)
     float dtheta = target->Theta - odom->Theta;
     dtheta = nav_angle_norm(dtheta);
 
-    // 检查是否到达终点
+    // 判断是否到达终点
     float dist_to_end_x = Nav_Path[Nav_PathCount - 1].X - odom->X;
     float dist_to_end_y = Nav_Path[Nav_PathCount - 1].Y - odom->Y;
     float dist_to_end = sqrtf(dist_to_end_x * dist_to_end_x + dist_to_end_y * dist_to_end_y);
@@ -308,7 +307,7 @@ void Run_Nag_GPS(void)
     float c = cosf(odom->Theta);
     float s = sinf(odom->Theta);
     float err_long =  dx * c + dy * s;   // 纵向偏差 (车头方向)
-    float err_lat  = -dx * s + dy * c;   // 横向偏差 (垂直车头)
+    float err_lat  = -dx * s + dy * c;   // 侧向偏差 (垂直车头)
 
     // 4. P控制计算控制量
     float vy_cmd = NAV_KP_LONG * err_long;
@@ -338,7 +337,7 @@ void Run_Nag_GPS(void)
 void Nag_Run(void)
 {
     if (N.End_f == 1 && N.Save_state == 0) {
-        // 记录结束, 保存最后数据
+        // 记录结束，保存最后数据
         flash_Nag_Write();
         N.Save_state = 1;
         return;
@@ -353,14 +352,14 @@ void Nag_Run(void)
         return;
     }
 
-    // 根据运行模式执行记录或跟踪
+    // 根据运行模式执行记录或者跟踪
     if (N.Save_state == 0 && N.End_f == 0) {
         // 记录模式
         Run_Nag_Save();
     } else {
         // 跟踪/回放模式
         Run_Nag_GPS();
-        // 直接输出控制量到底盘 (麦轮全向控制)
+        // 直接输出控制量到底盘 (麦克纳姆全向控制)
         Chassis_Move(N.ctrl_vx, N.ctrl_vy, N.ctrl_omega);
     }
 }
@@ -409,36 +408,36 @@ void Nag_System(void)
     }
 }
 
-/*================== Flash 读写适配 ==================*/
+/*================== Flash读写适配 ==================*/
 
 /**
  * @brief 从Flash加载路径点到RAM
- * @note  一次性读取所有页的路径点, 解析为 Nav_Path[] 数组
+ * @note 一次性读取所有页面的路径点，解析存入 Nav_Path[] 数组
  */
 void NagFlashRead(void)
 {
     if (N.Save_state) return;
 
-    // 第0页存了 Save_index (总点数), 先读出来
+    // 第0页面存放 Save_index (总点数), 先读出来
     flash_buffer_clear();
     flash_read_page_to_buffer(0, FLASH_PAGE_SIZE);
-    N.Save_index = flash_union_buffer[MAX_SIZE + 2];  // 存在第102个位置
+    N.Save_index = flash_union_buffer[MAX_SIZE + 2];  // 存放在第102位置
     uint16_t total_points = N.Save_index;
     if (total_points > NAV_MAX_PATH_POINTS) total_points = NAV_MAX_PATH_POINTS;
 
     flash_buffer_clear();
 
     uint16_t points_loaded = 0;
-    uint16_t page = Nag_Start_Page;  // 页码从45开始递减
+    uint16_t page = Nag_Start_Page;  // 页号从45开始递减
 
     while (points_loaded < total_points && page >= Nag_End_Page) {
         uint32_t offset = page * FLASH_PAGE_SIZE;
 
         if (!flash_check(FLASH_USER_START_ADDR + offset)) {
-            // 该页有数据, 读取
+            // 该页面有数据，读取
             flash_read_page_to_buffer(offset, FLASH_PAGE_SIZE);
 
-            // 解析路径点 (每点3个float)
+            // 解析路径点 (每个点3个float)
             for (uint16_t i = 0; i < NAV_POINTS_PER_PAGE && points_loaded < total_points; i++) {
                 Nav_Path[points_loaded].X     = *(float*)&flash_union_buffer[i * 3 + 0];
                 Nav_Path[points_loaded].Y     = *(float*)&flash_union_buffer[i * 3 + 1];
@@ -455,7 +454,6 @@ void NagFlashRead(void)
     N.Nag_SystemRun_Index++;
 }
 
-/*================== Flash 读写 (见 flash.c) ==================*/
+/*================== Flash读写 (详见 flash.c) ==================*/
 // flash_Nag_Write() 和 flash_Nag_Read() 在 flash.c 中实现,
 // 已修正页偏移bug并适配新路径点格式
-

@@ -5,7 +5,7 @@
 
 
 
-void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint32_t id ,UART_HandleTypeDef *_USART,int8_t _dir,
+void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint8_t id ,UART_HandleTypeDef *_USART,int8_t _dir,
      float _wheel_diameter, bool _have_pub_permission)
 {
 	zdt_mot->motor_controller_t.id=id;
@@ -13,6 +13,8 @@ void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint32_t id ,UART_HandleTypeDef *_U
 	zdt_mot->_dir=_dir;
 	zdt_mot->_wheel_diameter=_wheel_diameter;
 	zdt_mot->_have_pub_permission=_have_pub_permission;
+    //每隔10ms查询一次电机实际转速
+    // Emm_V5_Auto_Return_Sys_Params_Timed(id,S_VEL,10);
 }
 
 //第一部分：装填命令

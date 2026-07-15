@@ -1,8 +1,7 @@
-/*
+﻿/*
  * nagivation.h
  *
- *  Created on: 2024��10��16��
- *      Author: Monst
+ *      Author: 陈信沅
  */
 #include <stdbool.h>
 #include <stdint.h>
@@ -10,29 +9,28 @@
 #ifndef _NAVIGATION_H_
 #define _NAVIGATION_H_
 
-/*================== 惯导位姿 ==================*/
 
 #define NAV_PI  3.14159265f
 
 typedef struct {
-    float X;        // 世界坐标系X位置 (m)
-    float Y;        // 世界坐标系Y位置 (m)
-    float Theta;    // 世界坐标系航向角 (rad, 逆时针为正)
+    float X;        //  (m)
+    float Y;        //  (m)
+    float Theta;    // (rad)世界坐标
 
-    float Vx_body;  // 底盘横向速度 (m/s), 右侧为正
-    float Vy_body;  // 底盘纵向速度 (m/s), 前方为正
-    float Omega;    // 底盘旋转角速度 (rad/s), 逆时针为正
+    float Vx_body;  //  
+    float Vy_body;  //  (m/s)
+    float Omega;    //  (rad/s), 
 
-    float Vx_world; // 世界坐标系X方向速度
-    float Vy_world;
+    float Vx_world; // 
+    float Vy_world; //  (m/s)
 
-    float mileage;      // 总行驶里程 (m)
-    float Theta_imu;    // IMU提供的航向角 (rad)
-    float Omega_imu;    // IMU提供的角速度 (rad/s)
+    float mileage;      //  (m)
+    float Theta_imu;    //  (rad)
+    float Omega_imu;    // (rad/s)
 
     uint32_t last_tick_ms;
     uint8_t  is_inited;
-    uint8_t  use_imu_fusion; // 1:启用IMU融合(推荐), 0:纯轮速
+    uint8_t  use_imu_fusion; //
 } Nav_Odom_t;
 
 extern Nav_Odom_t Nav_Odom;
@@ -46,7 +44,7 @@ Nav_Odom_t* Nav_Get_Odom(void);
 
 #define NAV_PATH_POINT_DIST  0.05f   // 路径点间隔 5cm
 #define NAV_MAX_PATH_POINTS  2000    // 最大支持的路径点数 (约100m)
-#define NAV_POINTS_PER_PAGE  150     // 每Flash页存150个点 (150*3*4=1800 bytes)
+#define NAV_POINTS_PER_PAGE  150     // 每Flash页存储150个点 (150*3*4=1800 bytes)
 
 typedef struct {
     float X;
@@ -60,7 +58,7 @@ extern uint16_t Nav_PathCount;  // 当前有效路径点数
 /*================== 导航控制参数 ==================*/
 
 #define NAV_KP_LONG   2.0f   // 纵向偏差增益 (车头方向)
-#define NAV_KP_LAT    3.0f   // 横向偏差增益 (垂直车头方向, 麦轮横移用)
+#define NAV_KP_LAT    3.0f   // 侧向偏差增益 (垂直车头方向,麦轮横移使用)
 #define NAV_KP_ANGLE  2.5f   // 角度偏差增益
 #define NAV_MAX_VEL   0.5f   // 导航输出速度限幅 (m/s)
 #define NAV_MAX_OMEGA 2.0f   // 导航输出角速度限幅 (rad/s)
@@ -68,9 +66,9 @@ extern uint16_t Nav_PathCount;  // 当前有效路径点数
 
 /*================== Flash 相关 ==================*/
 
-#define MaxSize 500    //flash存储点阵数据页数 (兼容旧定义, 实际用NAV_POINTS_PER_PAGE)
+#define MaxSize 500    //flash存储点数组数据页数 (兼容旧定义，实际使用NAV_POINTS_PER_PAGE)
 
-#define Read_MaxSize 10000//读取用设定
+#define Read_MaxSize 10000//读取预设值
 
 #define Nag_End_Page 1
 #define Nag_Start_Page 45
@@ -80,7 +78,7 @@ extern uint16_t Nav_PathCount;  // 当前有效路径点数
 typedef struct{
     // 控制输出 (供上层或直接调用底盘)
     float Final_Out;    // 角度偏差 (兼容旧接口, rad)
-    float ctrl_vx;      // 横向速度输出 (m/s)
+    float ctrl_vx;      // 侧向速度输出 (m/s)
     float ctrl_vy;      // 纵向速度输出 (m/s)
     float ctrl_omega;   // 旋转角速度输出 (rad/s)
 

@@ -1,0 +1,24 @@
+=== Experiment: 锟斤拷 reversal ===
+Original: 世界坐标系
+GBK bytes: cac0bde7d7f8b1eacfb5
+GBK bytes as UTF-8: '��������ϵ'
+Garbled text re-encoded as UTF-8: efbfbdefbfbdefbfbdefbfbdefbfbdefbfbdefbfbdefbfbdcfb5
+This doesn't help because replacement chars destroy info.
+
+=== Experiment: GBK -> Latin1 -> UTF-8 reversal ===
+Original: 俯仰角
+GBK bytes: b8a9d1f6bdc7
+GBK bytes as Latin1: '¸©Ñö½Ç'
+Latin1 text as UTF-8: c2b8c2a9c391c3b6c2bdc387
+Recovered: 俯仰角
+
+=== Check navigation.h date line ===
+Corrupted text: 2024锟斤拷10锟斤拷16锟斤拷
+UTF-8 bytes: 32303234e9949fe696a4e68bb73130e9949fe696a4e68bb73136e9949fe696a4e68bb7
+Length: 35 bytes
+GBK decode error: 'gbk' codec can't decode byte 0xb7 in position 12: illegal multibyte sequence
+Split parts: ['32303234', '3130', '3136', '']
+  32303234 as GBK: '2024'
+  3130 as GBK: '10'
+  3136 as GBK: '16'
+   as GBK: ''
