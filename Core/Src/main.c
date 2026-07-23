@@ -36,6 +36,7 @@
 #include "Servo_motor.h"
 #include "MPU9250.h"
 #include "ZDTstepmotor.h"
+#include "CanMV_K210.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -143,9 +144,12 @@ int main(void)
   // HAL_TIM_PWM_Start(&htim9,TIM_CHANNEL_2);
   // icm_init();
 
-  __HAL_UART_CLEAR_IDLEFLAG(&huart1); 						
-  __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE); 				
-  HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN); 
+  __HAL_UART_CLEAR_IDLEFLAG(&huart1);
+  __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE);
+  HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN);
+
+  /* 初始化 CanMV K210 视觉模块 (UART4 @ 115200 + DMA + IDLE 中断) */
+  CanMV_Init(); 
 
 
 
