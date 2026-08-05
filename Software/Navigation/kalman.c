@@ -1,6 +1,4 @@
 /*
-* ???????????????
-*
 *
 *
 */
@@ -21,14 +19,32 @@ quater_param_t Q_info = {1, 0, 0};
 euler_param_t eulerAngle;
 
 icm_param_t icm_data;
-gyro_param_t GyroOffset;
+gyro_offset_param_t GyroOffset;
 
 bool GyroOffset_init = 0;
 
-float param_Kp = 1;
-float param_Ki = 0.001;  //0.001
+float param_Kp = 1.0f;    //1.0
+float param_Ki = 0.001f;  //0.001
 
 float angle_Z = 0,angle_R = 0,angle_P = 0;
+static uint8_t euler_zero_inited = 0;
+static float euler_raw_pitch = 0.0f;
+static float euler_raw_roll = 0.0f;
+static float euler_raw_yaw = 0.0f;
+static float euler_pitch_zero = 0.0f;
+static float euler_roll_zero = 0.0f;
+static float euler_yaw_zero = 0.0f;
+
+static float angle_norm_180(float angle)
+{
+   while (angle > 180.0f) {
+      angle -= 360.0f;
+   }
+   while (angle < -180.0f) {
+      angle += 360.0f;
+   }
+   return angle;
+}
 
 float fast_sqrt(float x) {
    float halfx = 0.5f * x;
@@ -53,7 +69,7 @@ static uint32_t GetTimeStampUS()
     return(m*1000+(u*1000)/tms);
 }
 
-void icm_init(void)//?????????
+void icm_init(void)//
 {
     while(1)
     {
@@ -62,7 +78,7 @@ void icm_init(void)//?????????
             if(GetTimeStampUS()>timestamp+50000)
             {
                 timestamp = GetTimeStampUS();
-                HAL_GPIO_TogglePin(GPIOD,GPIO_PIN_15);
+                HAL_GPIO_TogglePin(GPIOD, GPIO_PIN_15);
             }
         }
         else
@@ -83,16 +99,35 @@ void icm_init(void)//?????????
 		GyroOffset.Xdata += icm_data.gyro_x;//x
 		GyroOffset.Ydata += icm_data.gyro_y;//y
 		GyroOffset.Zdata += icm_data.gyro_z;//z
-		HAL_Delay(10);
+		HAL_Delay(3);
    }
    GyroOffset.Xdata /= (float)cnt;
    GyroOffset.Ydata /= (float)cnt;
    GyroOffset.Zdata /= (float)cnt;
    eulerAngle.Dirchange=0;
+   eulerAngle.last_yaw=0.0f;
+   euler_zero_inited=0;
+   euler_raw_pitch=0.0f;
+   euler_raw_roll=0.0f;
+   euler_raw_yaw=0.0f;
+   euler_pitch_zero=0.0f;
+   euler_roll_zero=0.0f;
+   euler_yaw_zero=0.0f;
+   angle_Z=0.0f;
+   angle_R=0.0f;
+   angle_P=0.0f;
    GyroOffset_init = 1;
+
+   /* Let the AHRS settle before taking the startup pose as zero. */
+   for (uint16_t i = 0; i < 200; ++i)
+   {
+      ICM_getEulerianAngles();
+      HAL_Delay(3);
+   }
+   Kalman_ResetEulerZero();
 }
 
-#define alpha           0.4f//????
+#define alpha           0.4f//低通滤波
 
 void ICM_getValues() {
 
@@ -102,15 +137,14 @@ void ICM_getValues() {
    icm_data.acc_x = (((float) icm_data.acc_x) * alpha) * 8 / 4096 + icm_data.acc_x * (1 - alpha);
    icm_data.acc_y = (((float) icm_data.acc_y) * alpha) * 8 / 4096 + icm_data.acc_y * (1 - alpha);
    icm_data.acc_z = (((float) icm_data.acc_z) * alpha) * 8 / 4096 + icm_data.acc_z * (1 - alpha);
-   //????????
 
    icm_data.gyro_x = ((float) icm_data.gyro_x - GyroOffset.Xdata) * GNSS_PI / 180 / 16.4f;
    icm_data.gyro_y = ((float) icm_data.gyro_y - GyroOffset.Ydata) * GNSS_PI / 180 / 16.4f;
    icm_data.gyro_z = ((float) icm_data.gyro_z - GyroOffset.Zdata) * GNSS_PI / 180 / 16.4f;
-   //???????
-   if( fabs(icm_data.gyro_x) < 0.02 && fabs(icm_data.gyro_y) < 0.02 && fabs(icm_data.gyro_z) < 0.02 )
+
+   if( fabs(icm_data.gyro_x) < 0.01 && fabs(icm_data.gyro_y) < 0.01 && fabs(icm_data.gyro_z) < 0.01 )
    {
-      // ????????????
+      //忽略太小的值
       icm_data.gyro_x = 0;
       icm_data.gyro_y = 0;
       icm_data.gyro_z = 0;
@@ -118,7 +152,7 @@ void ICM_getValues() {
 }
 
 void ICM_AHRSupdate(float gx, float gy, float gz, float ax, float ay, float az) {
-   float halfT = 0.5 * delta_T;
+   float halfT = 0.5f * delta_T;
    float vx, vy, vz;
    float ex, ey, ez;
    float q0 = Q_info.q0;
@@ -135,7 +169,7 @@ void ICM_AHRSupdate(float gx, float gy, float gz, float ax, float ay, float az) 
    float q2q2 = q2 * q2;
    float q2q3 = q2 * q3;
    float q3q3 = q3 * q3;
-   float delta_2 = 0.17;
+   float delta_2 = 0.17f;
 
    float norm = fast_sqrt(ax * ax + ay * ay + az * az);
    ax = ax * norm;
@@ -160,8 +194,6 @@ void ICM_AHRSupdate(float gx, float gy, float gz, float ax, float ay, float az) 
    gx = gx + param_Kp * ex + param_Ki * I_ex;
    gy = gy + param_Kp * ey + param_Ki * I_ey;
    gz = gz + param_Kp * ez + param_Ki * I_ez;
-
-
 
 
    q0 = q0 + (-q1 * gx - q2 * gy - q3 * gz) * halfT;
@@ -202,22 +234,51 @@ void ICM_getEulerianAngles(void) {
 //
    if (eulerAngle.yaw >= 180) { eulerAngle.yaw -= 360; } else if (eulerAngle.yaw <= -180) { eulerAngle.yaw += 360; }
 
-   //ƫ���Ǻ�����
+
    if((eulerAngle.yaw-eulerAngle.last_yaw) < -350) eulerAngle.Dirchange++;
    else if ((eulerAngle.yaw-eulerAngle.last_yaw) > 350) eulerAngle.Dirchange--;
 
    angle_Z=360*eulerAngle.Dirchange+eulerAngle.yaw;//180*eulerAngle.Dirchange+eulerAngle.yaw
    eulerAngle.last_yaw=eulerAngle.yaw;
 
+   euler_raw_pitch = eulerAngle.pitch;
+   euler_raw_roll = eulerAngle.roll;
+   euler_raw_yaw = angle_Z;
+
+   if (euler_zero_inited != 0) {
+      angle_P = euler_raw_pitch - euler_pitch_zero;
+      angle_R = euler_raw_roll - euler_roll_zero;
+      angle_Z = euler_raw_yaw - euler_yaw_zero;
+
+      eulerAngle.pitch = angle_P;
+      eulerAngle.roll = angle_R;
+      eulerAngle.yaw = angle_norm_180(angle_Z);
+   }
+
 }
 
-/*================== IMU融合对外接口实现 ==================*/
+void Kalman_ResetEulerZero(void)
+{
+   euler_pitch_zero = euler_raw_pitch;
+   euler_roll_zero = euler_raw_roll;
+   euler_yaw_zero = euler_raw_yaw;
+   euler_zero_inited = 1;
+
+   angle_Z = 0.0f;
+   angle_R = 0.0f;
+   angle_P = 0.0f;
+   eulerAngle.yaw = 0.0f;
+   eulerAngle.roll = 0.0f;
+   eulerAngle.pitch = 0.0f;
+}
+
+/*================== IMU相关姿态角度获取接口 ==================*/
 
 /**
- * @brief  获取IMU偏航角 (弧度制, 连续无跳变)
- * @retval 偏航角 (rad), 范围无限制, 已处理±180°跳变和圈数累积
- * @note   基于 Mahony AHRS 解算后的 angle_Z, 角度制转弧度制
- *         调用前需确保 ICM_getEulerianAngles() 已被周期性执行
+ * @brief  获取航向角Yaw（偏航角）
+ * @retval 偏航角 (rad)，角度范围 -180 ~ +180 度换算得到弧度，对应正北为基准航向
+ * @note   数据源：Mahony AHRS 解算得到 angle_Z，由陀螺仪+加速度计融合姿态；
+ *         如需完整欧拉角请调用 ICM_getEulerianAngles()
  */
 float Kalman_GetYawRad(void)
 {
@@ -225,14 +286,12 @@ float Kalman_GetYawRad(void)
 }
 
 /**
- * @brief  获取IMU Z轴角速度 (rad/s, 零偏已补偿)
- * @retval yaw轴角速度 (rad/s), 已做零偏补偿和死区处理
- * @note   该值来自陀螺仪原始数据经零偏校准后的结果,
- *         可直接用于替换轮速正解算的 omega, 提高动态响应
+ * @brief  获取Z轴航向角速度 yaw角速度
+ * @retval yaw轴角速度 (rad/s)，陀螺仪原始Z轴角速度
+ * @note   该数值为IMU陀螺仪原始采样角速度omega，未经过姿态坐标转换，
+ *         直接读取传感器icm_data内gyro_z原始数据
  */
 float Kalman_GetYawOmegaRad(void)
 {
     return icm_data.gyro_z;
 }
-
-

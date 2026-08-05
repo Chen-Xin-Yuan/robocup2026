@@ -36,7 +36,47 @@ typedef enum {
 }SysParams_t;
 
 #define		MMCL_LEN		512
-extern __IO uint16_t MMCL_count, MMCL_cmd[MMCL_LEN];
+extern __IO uint16_t MMCL_count;
+extern __IO uint8_t MMCL_cmd[MMCL_LEN];
+
+/*
+ * UART1 DMA发送队列接口。
+ * 调用者只需提交一帧，底层会复制帧内容；因此调用者的临时数组或
+ * Emm_V5函数中的static命令数组可以立即复用，不会覆盖正在发送的数据。
+ * HAL_OK表示帧已被队列接收，不表示此刻已经完成物理发送。
+ */
+HAL_StatusTypeDef Emm_V5_Transmit_Frame(UART_HandleTypeDef *huart,
+                                       const uint8_t *data,
+                                       uint16_t length);
+
+/* Retry a retained head frame after HAL_BUSY. Call this once per main loop. */
+void Emm_V5_Process(void);
+
+/* Number of queue slots currently available for an all-or-nothing command group. */
+uint8_t Emm_V5_TxGetFreeSlots(void);
+
+/* Discard queued-but-not-active frames, primarily to make room for an urgent stop. */
+void Emm_V5_TxDiscardPending(void);
+
+/* 在HAL_UART_TxCpltCallback中转发此回调，自动启动队列中的下一帧。 */
+void Emm_V5_TxCpltCallback(UART_HandleTypeDef *huart);
+
+/* Forward HAL_UART_ErrorCallback here to clear an unsafe sequence after TX failure. */
+void Emm_V5_UartErrorCallback(UART_HandleTypeDef *huart);
+
+/* 因队列满或紧急停止清理而丢弃的帧数。 */
+extern volatile uint32_t Emm_V5_TxDroppedFrames;
+
+/* Frames discarded after a TX DMA error; retrying them could duplicate motion. */
+extern volatile uint32_t Emm_V5_TxFailedFrames;
+
+/* DMA成功启动、完成以及因HAL_BUSY而重试的次数，用于定位发送链路。 */
+extern volatile uint32_t Emm_V5_TxStartedFrames;
+extern volatile uint32_t Emm_V5_TxCompletedFrames;
+extern volatile uint32_t Emm_V5_TxBusyRetries;
+
+/* MMCL commands rejected before append because the 512-byte buffer was full. */
+extern volatile uint32_t Emm_V5_MMCLRejectedCommands;
 
 /**
 ***********************************************************

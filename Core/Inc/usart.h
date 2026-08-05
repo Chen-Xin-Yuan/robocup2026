@@ -29,17 +29,11 @@ extern "C" {
 #include "main.h"
 
 /* USER CODE BEGIN Includes */
-#include <stdbool.h>
-#define		CMD_LEN		255
-
-extern __IO bool rxFrameFlag;
-extern __IO uint8_t rxCmd[CMD_LEN];
-extern __IO uint8_t rxCount;
-
-
 /* USER CODE END Includes */
 
 extern UART_HandleTypeDef huart1;
+
+extern UART_HandleTypeDef huart2;
 
 extern UART_HandleTypeDef huart6;
 
@@ -48,6 +42,7 @@ extern UART_HandleTypeDef huart6;
 /* USER CODE END Private defines */
 
 void MX_USART1_UART_Init(void);
+void MX_USART2_UART_Init(void);
 void MX_USART6_UART_Init(void);
 
 /* USER CODE BEGIN Prototypes */

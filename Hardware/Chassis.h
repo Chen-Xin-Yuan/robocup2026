@@ -4,10 +4,12 @@
 
 /*================== 常量定义 ==================*/
 #define CHASSIS_PI          3.14159265f
-#define CHASSIS_SQRT2       1.41421356f
-#define CHASSIS_WIDTH       0.19f       // 左右轮距 (m)
-#define CHASSIS_LENGTH      0.22f       // 前后轮距 (m)
+#define CHASSIS_WIDTH       0.163f       // 左右轮距 (m)
+#define CHASSIS_LENGTH      0.1725f       // 前后轮距 (m)
 #define CHASSIS_WHEEL_DIA   0.08f       // 轮子直径 (m)
+
+/* Number of complete four-motor updates rejected because the TX queue was busy. */
+extern volatile uint32_t Chassis_TxRejectedBatches;
 
 /*================== 底盘运动控制接口 ==================*/
 
@@ -16,6 +18,12 @@
  * @param _USART 串口句柄, 波特率需为 115200
  */
 void Chassis_Init(UART_HandleTypeDef *_USART);
+
+/**
+ * @brief Service the motor TX queue.
+ * @note No motor feedback is received; this only advances queued TX frames.
+ */
+void Chassis_Process(void);
 
 /**
  * @brief 设置默认速度 (m/s), 用于位置控制
@@ -37,7 +45,7 @@ void Chassis_Move(float vx, float vy, float omega);
  * @param sx        横向位移 (m), 右侧为正
  * @param sy        纵向位移 (m), 前方为正
  * @param theta_deg 旋转角度 (deg), 逆时针为正
- * @retval 预计执行时间 (s)
+ * @retval 预计执行时间 (ms)；发送队列无法接收完整命令组时返回 -1
  */
 float Chassis_MovePos(float sx, float sy, float theta_deg);
 

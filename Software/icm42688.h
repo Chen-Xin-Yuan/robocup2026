@@ -4,8 +4,8 @@
 #include "main.h"
 #include "kalman.h"
 
-// ICM-42688-P I2C地址 (AD0引脚低电平)
-#define ICM42688_ADDRESS         0x68
+// ICM-42688-P 
+#define ICM42688_ADDRESS         0x69
 
 // 寄存器地址 (Bank 0)
 #define REG_BANK_SEL            0x76
@@ -23,14 +23,6 @@
 #define ICM42688_OK             0
 #define ICM42688_ERR_INIT       1
 #define ICM42688_ERR_COMM       2
-
-
-// extern int16_t icm_accel[3];
-// extern int16_t icm_gyro[3];
-// extern float icm_accel_g[3];
-// extern float icm_gyro_dps[3];
-
-// 函数声明
 
 
 uint8_t ICM42688_Init(I2C_HandleTypeDef *hi2c);

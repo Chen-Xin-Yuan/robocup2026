@@ -35,8 +35,10 @@
 "demo\kalman.o"
 "demo\navigation.o"
 "demo\icm42688.o"
-"demo\mpu9250.o"
 "demo\emm_v5.o"
+"demo\all_init.o"
+"demo\pid.o"
+"demo\control.o"
 --library_type=microlib --strict --scatter "demo\demo.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
 --info sizes --info totals --info unused --info veneers

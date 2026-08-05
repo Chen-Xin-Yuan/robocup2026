@@ -1,4 +1,295 @@
 #include "Emm_V5.h"
+#include <string.h>
+
+/*
+ * DMA发送不能并发启动。直接连续调用HAL_UART_Transmit_DMA会得到HAL_BUSY，
+ * 而且Emm_V5命令函数使用static缓冲区，下一条命令还可能改写上一条帧。
+ * 这里用固定槽位保存帧副本：主循环只做一次短内存拷贝，真正发送由DMA完成
+ * 中断串联，既不阻塞CPU，也能吸收队列容量范围内的突发命令。
+ */
+#define EMM_V5_TX_QUEUE_DEPTH     16U
+#define EMM_V5_TX_MAX_FRAME_SIZE  (MMCL_LEN + 5U)
+#define EMM_V5_TX_RETRY_PERIOD_MS 1U
+#define EMM_V5_TX_INTER_FRAME_MS   2U
+#define EMM_V5_TX_SYNC_DELAY_MS    1U
+//发送同步帧和之前的帧之间的最小间隔，避免驱动器处理阶段和下一条命令挤在一起
+
+typedef struct
+{
+  uint16_t length;
+  uint8_t data[EMM_V5_TX_MAX_FRAME_SIZE];
+} Emm_V5_TxFrame_t;
+
+static Emm_V5_TxFrame_t emm_v5_tx_queue[EMM_V5_TX_QUEUE_DEPTH];//发送队列结构体数组
+static volatile uint8_t emm_v5_tx_head = 0U;
+static volatile uint8_t emm_v5_tx_tail = 0U;
+static volatile uint8_t emm_v5_tx_count = 0U;
+static volatile bool emm_v5_tx_active = false;
+static volatile uint32_t emm_v5_tx_last_retry_tick = 0U;
+static volatile uint32_t emm_v5_tx_next_start_tick = 0U;
+volatile uint32_t Emm_V5_TxDroppedFrames = 0U;
+volatile uint32_t Emm_V5_TxFailedFrames = 0U;
+volatile uint32_t Emm_V5_TxStartedFrames = 0U;
+volatile uint32_t Emm_V5_TxCompletedFrames = 0U;
+volatile uint32_t Emm_V5_TxBusyRetries = 0U;
+
+/**
+ * @brief 进入发送队列的临界区。
+ *
+ * 主循环会向队列写入数据，DMA完成中断会从队列取出数据；两边可能同时修改
+ * head、tail、count和active。修改这些共享变量前临时关闭中断，避免队列状态
+ * 只更新了一半就被DMA中断打断。
+ *
+ * @return 进入临界区之前的PRIMASK值，交给Emm_V5_ExitCritical恢复现场。
+ * @note 不能在这里直接无条件重新开中断，因为调用者进入本函数前可能已经
+ *       处在关中断状态。
+ */
+static uint32_t Emm_V5_EnterCritical(void)
+{
+  uint32_t primask = __get_PRIMASK();//获取中断状态
+  __disable_irq();//关闭中断
+  return primask;
+}
+
+/**
+ * @brief 退出发送队列的临界区，并恢复进入前的中断状态。
+ * @param primask Emm_V5_EnterCritical返回的原始PRIMASK值。
+ *
+ * primask为0表示进入前允许中断，此时才重新开中断；primask不为0表示调用者
+ * 原本就在关中断环境中，因此保持关闭，避免意外改变外层代码的中断状态。
+ */
+static void Emm_V5_ExitCritical(uint32_t primask)
+{
+  if (primask == 0U)
+  {
+    __enable_irq();//开启中断
+  }
+}
+
+/**
+ * @brief Check whether the UART is the USART1 instance owned by this queue.
+ *
+ * USART1 is intentionally exclusive to this module for DMA transmission. All
+ * USART1 writers must call Emm_V5_Transmit_Frame instead of calling a HAL UART
+ * transmit function directly.
+ */
+static bool Emm_V5_IsSupportedUart(const UART_HandleTypeDef *huart)
+{
+  /*
+   * This queue owns USART1 TX. Accepting another UART would be unsafe because
+   * the project only configures a TX DMA handle and IRQ for USART1.
+   */
+  return (huart == &huart1) && (huart->hdmatx != NULL);
+}
+
+static bool Emm_V5_IsSyncTriggerFrame(const Emm_V5_TxFrame_t *frame)
+{
+  return (frame != NULL) && (frame->length == 4U) &&
+         (frame->data[1] == 0xFFU) && (frame->data[2] == 0x66U) &&
+         (frame->data[3] == 0x6BU);
+}
+
+static HAL_StatusTypeDef Emm_V5_TryStartTx(void)
+{
+  Emm_V5_TxFrame_t *frame;
+  HAL_StatusTypeDef status;
+  uint32_t now;
+  uint32_t primask = Emm_V5_EnterCritical();//进入临界区，关闭中断
+
+  if (emm_v5_tx_active || (emm_v5_tx_count == 0U))
+  {
+    Emm_V5_ExitCritical(primask);
+    return HAL_OK;
+  }
+
+  now = HAL_GetTick();
+  if ((int32_t)(now - emm_v5_tx_next_start_tick) < 0)
+  {
+    /*
+     * Emm_V5会在收到命令后解析并回传ACK。上一帧刚发送完时立即启动
+     * 下一帧，可能让下一条命令与驱动器回传/处理阶段挤在一起。这里保留
+     * 使用实测可用的2 ms帧间隔，但等待由主循环完成，不阻塞CPU。
+     */
+    emm_v5_tx_last_retry_tick = now;
+    Emm_V5_ExitCritical(primask);
+    return HAL_BUSY;
+  }
+
+  frame = &emm_v5_tx_queue[emm_v5_tx_head];
+
+  /*
+   * Keep IRQs disabled for this short HAL call. This makes the HAL TX state
+   * and emm_v5_tx_active change atomically, so a completion callback cannot
+   * consume a frame that HAL did not actually start.
+   */
+  status = HAL_UART_Transmit_DMA(&huart1, frame->data, frame->length);
+  if (status == HAL_OK)
+  {
+    emm_v5_tx_active = true;
+    Emm_V5_TxStartedFrames++;
+  }
+  else
+  {
+    /* Keep the head frame. Emm_V5_Process retries it without duplicating it. */
+    emm_v5_tx_last_retry_tick = now;
+    if (status == HAL_BUSY)
+    {
+      Emm_V5_TxBusyRetries++;
+    }
+  }
+
+  Emm_V5_ExitCritical(primask);
+  return status;
+}
+
+HAL_StatusTypeDef Emm_V5_Transmit_Frame(UART_HandleTypeDef *huart,
+                                       const uint8_t *data,
+                                       uint16_t length)
+{
+  Emm_V5_TxFrame_t *frame;
+  uint32_t primask;
+
+  if (!Emm_V5_IsSupportedUart(huart) || (data == NULL) || (length == 0U) ||
+      (length > EMM_V5_TX_MAX_FRAME_SIZE))
+  {
+    return HAL_ERROR;
+  }
+
+  primask = Emm_V5_EnterCritical();
+  if (emm_v5_tx_count >= EMM_V5_TX_QUEUE_DEPTH)
+  {
+    Emm_V5_TxDroppedFrames++;
+    Emm_V5_ExitCritical(primask);
+    return HAL_BUSY;
+  }
+
+  frame = &emm_v5_tx_queue[emm_v5_tx_tail];
+  frame->length = length;
+  memcpy(frame->data, data, length);
+  emm_v5_tx_tail = (uint8_t)((emm_v5_tx_tail + 1U) % EMM_V5_TX_QUEUE_DEPTH);
+  emm_v5_tx_count++;
+  Emm_V5_ExitCritical(primask);
+
+  (void)Emm_V5_TryStartTx();
+  return HAL_OK;
+}
+//查询可用的发送槽位
+uint8_t Emm_V5_TxGetFreeSlots(void)
+{
+  uint8_t free_slots;
+  uint32_t primask = Emm_V5_EnterCritical();
+
+  free_slots = (uint8_t)(EMM_V5_TX_QUEUE_DEPTH - emm_v5_tx_count);
+  Emm_V5_ExitCritical(primask);
+  return free_slots;
+}
+
+void Emm_V5_TxDiscardPending(void)
+{
+  uint8_t discarded;
+  uint32_t primask = Emm_V5_EnterCritical();
+
+  if (emm_v5_tx_active && (emm_v5_tx_count > 0U))
+  {
+    /* DMA owns the head buffer until its callback; only discard later slots. */
+    discarded = (uint8_t)(emm_v5_tx_count - 1U);
+    emm_v5_tx_count = 1U;
+    emm_v5_tx_tail = (uint8_t)((emm_v5_tx_head + 1U) % EMM_V5_TX_QUEUE_DEPTH);
+  }
+  else
+  {
+    discarded = emm_v5_tx_count;
+    emm_v5_tx_count = 0U;
+    emm_v5_tx_tail = emm_v5_tx_head;
+  }
+
+  Emm_V5_TxDroppedFrames += discarded;
+  Emm_V5_ExitCritical(primask);
+}
+//
+void Emm_V5_Process(void)
+{
+  bool retry_needed;
+  uint32_t now = HAL_GetTick();
+  uint32_t primask = Emm_V5_EnterCritical();
+
+  retry_needed = (!emm_v5_tx_active && (emm_v5_tx_count > 0U));
+  Emm_V5_ExitCritical(primask);
+
+  if (retry_needed &&
+      ((uint32_t)(now - emm_v5_tx_last_retry_tick) >= EMM_V5_TX_RETRY_PERIOD_MS))
+      //大于EMM_V5_TX_RETRY_PERIOD_MS才允许本次重试
+  {
+    emm_v5_tx_last_retry_tick = now;
+    (void)Emm_V5_TryStartTx();
+  }
+}
+
+/* Release the slot only after HAL confirms that the final UART bit was sent. */
+void Emm_V5_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+  uint32_t next_delay_ms = EMM_V5_TX_INTER_FRAME_MS;
+  uint32_t primask = Emm_V5_EnterCritical();
+
+  if (!Emm_V5_IsSupportedUart(huart))
+  {
+    Emm_V5_ExitCritical(primask);
+    return;
+  }
+
+  if (emm_v5_tx_active && (emm_v5_tx_count > 0U))
+  {
+    emm_v5_tx_active = false;
+    emm_v5_tx_head = (uint8_t)((emm_v5_tx_head + 1U) % EMM_V5_TX_QUEUE_DEPTH);
+    emm_v5_tx_count--;
+    Emm_V5_TxCompletedFrames++;
+    if ((emm_v5_tx_count > 0U) &&
+        Emm_V5_IsSyncTriggerFrame(&emm_v5_tx_queue[emm_v5_tx_head]))
+    {
+      /* Allow all addressed motors to cache their pending command first. */
+      next_delay_ms = EMM_V5_TX_SYNC_DELAY_MS;
+    }
+    emm_v5_tx_next_start_tick = HAL_GetTick() + next_delay_ms;
+  }
+  Emm_V5_ExitCritical(primask);
+
+  /*
+   * 不在UART完成中断里立刻发送下一帧。主循环中的Emm_V5_Process会在
+   * 帧间隔到达后继续发送，避免驱动器还在回ACK时下一帧已经到达。
+   */
+}
+
+void Emm_V5_UartErrorCallback(UART_HandleTypeDef *huart)
+{
+  uint8_t failed_frames;
+  uint32_t primask = Emm_V5_EnterCritical();
+
+  if (!Emm_V5_IsSupportedUart(huart))
+  {
+    Emm_V5_ExitCritical(primask);
+    return;
+  }
+
+  /*
+   * RX line errors may call HAL_UART_ErrorCallback while TX is still healthy.
+   * A TX DMA error, however, leaves gState READY after HAL aborts that TX.
+   * A partial frame also makes the boundary of a multi-frame synchronized
+   * command unsafe. Clear the complete pending sequence instead of sending a
+   * later sync trigger or retrying a non-idempotent relative-motion command.
+   */
+  if (emm_v5_tx_active && (emm_v5_tx_count > 0U) &&
+      ((huart->ErrorCode & HAL_UART_ERROR_DMA) != 0U) &&
+      (huart->gState == HAL_UART_STATE_READY))
+  {
+    failed_frames = emm_v5_tx_count;
+    emm_v5_tx_active = false;
+    emm_v5_tx_head = emm_v5_tx_tail;
+    emm_v5_tx_count = 0U;
+    Emm_V5_TxFailedFrames += failed_frames;
+  }
+
+  Emm_V5_ExitCritical(primask);
+}
 
 /**********************************************************
 ***	Emm_V5.0步进闭环控制例程
@@ -9,7 +300,44 @@
 ***	qq交流群：262438510
 **********************************************************/
 
-__IO uint16_t MMCL_count = 0, MMCL_cmd[MMCL_LEN] = {0};
+__IO uint16_t MMCL_count = 0U;
+__IO uint8_t MMCL_cmd[MMCL_LEN] = {0U};
+volatile uint32_t Emm_V5_MMCLRejectedCommands = 0U;
+
+/**
+ * @brief Append one complete command to the MMCL aggregate buffer.
+ *
+ * The capacity test and copy are one critical operation. If there is not
+ * enough room, the existing aggregate is left unchanged so it can still be
+ * sent, and the new command is rejected without writing past MMCL_cmd.
+ */
+static bool Emm_V5_MMCL_Append(const uint8_t *command, uint16_t length)
+{
+  uint16_t i;
+  uint32_t primask;
+
+  if ((command == NULL) || (length == 0U) || (length > MMCL_LEN))
+  {
+    Emm_V5_MMCLRejectedCommands++;
+    return false;
+  }
+
+  primask = Emm_V5_EnterCritical();
+  if ((MMCL_count > MMCL_LEN) ||
+      (length > (uint16_t)(MMCL_LEN - MMCL_count)))
+  {
+    Emm_V5_MMCLRejectedCommands++;
+    Emm_V5_ExitCritical(primask);
+    return false;
+  }
+
+  for (i = 0U; i < length; i++)
+  {
+    MMCL_cmd[MMCL_count++] = command[i];
+  }
+  Emm_V5_ExitCritical(primask);
+  return true;
+}
 
 /**********************************************************
 *** 触发动作命令
@@ -30,7 +358,7 @@ void Emm_V5_Trig_Encoder_Cal(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-	HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+	Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -49,7 +377,7 @@ void Emm_V5_Reset_Motor(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-	HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+	Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -68,7 +396,7 @@ void Emm_V5_Reset_CurPos_To_Zero(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-	HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+	Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -87,7 +415,7 @@ void Emm_V5_Reset_Clog_Pro(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -106,7 +434,7 @@ void Emm_V5_Restore_Motor(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-	HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+	Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**********************************************************
@@ -119,10 +447,12 @@ void Emm_V5_Restore_Motor(uint8_t addr)
   */
 void Emm_V5_Multi_Motor_Cmd(uint8_t addr)
 {
-  uint16_t i = 0, j = 0, len = 0; __IO static uint8_t cmd[MMCL_LEN] = {0};
+  uint16_t i = 0, j = 0, len = 0;
+  HAL_StatusTypeDef status;
+  __IO static uint8_t cmd[MMCL_LEN + 5U] = {0};
   
 	// 多电机命令长度大于0
-	if(MMCL_count > 0)
+	if((MMCL_count > 0U) && (MMCL_count <= MMCL_LEN))
 	{
 		// 多电机命令的总字节数
 		len = MMCL_count + 5;
@@ -136,11 +466,13 @@ void Emm_V5_Multi_Motor_Cmd(uint8_t addr)
 		cmd[j] = 0x6B; ++j;                  // 校验字节
 		
 		// 发送命令
-		HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, j); MMCL_count = 0;
+		status = Emm_V5_Transmit_Frame(&huart1, (const uint8_t *)cmd, j);
+		if(status == HAL_OK) { MMCL_count = 0U; }
 	}
 	else
 	{
-		MMCL_count = 0;
+		if(MMCL_count > MMCL_LEN) { Emm_V5_MMCLRejectedCommands++; }
+		MMCL_count = 0U;
 	}
 }
 
@@ -164,7 +496,7 @@ void Emm_V5_En_Control(uint8_t addr, bool state, bool snF)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -191,7 +523,7 @@ void Emm_V5_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bo
   cmd[7] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 8);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 8);
 //  HAL_UART_Transmit(&huart1, (uint8_t *)cmd, 8, 100);
 }
 
@@ -226,7 +558,7 @@ void Emm_V5_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, ui
   cmd[12] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 13);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 13);
 }
 
 /**
@@ -253,7 +585,7 @@ void Emm_V5_Set_QPos_Params(uint8_t addr, uint16_t vel, uint8_t acc, uint8_t raF
   cmd[7] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 8);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 8);
 }
 
 /**
@@ -276,7 +608,7 @@ void Emm_V5_QPos_Control(uint8_t addr, int32_t clk)
   cmd[6] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 7);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 7);
 }
 
 /**
@@ -297,7 +629,7 @@ void Emm_V5_Stop_Now(uint8_t addr, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 5);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 5);
 }
 
 /**
@@ -316,7 +648,7 @@ void Emm_V5_Synchronous_motion(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**********************************************************
@@ -340,7 +672,7 @@ void Emm_V5_Origin_Set_O(uint8_t addr, bool svF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 5);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 5);
 }
 
 /**
@@ -362,7 +694,7 @@ void Emm_V5_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 5);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 5);
 }
 
 /**
@@ -381,7 +713,7 @@ void Emm_V5_Origin_Interrupt(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -399,7 +731,7 @@ void Emm_V5_Origin_Read_Params(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -443,7 +775,7 @@ void Emm_V5_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t
   cmd[19] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 20);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 20);
 }
 
 /**
@@ -461,7 +793,7 @@ void X_V2_Origin_Read_SL_RP(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -485,7 +817,7 @@ void X_V2_Origin_Modify_SL_RP(uint8_t addr, bool svF, uint16_t sl_rp)
   cmd[6]  =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 7);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 7);
 }
 
 /**********************************************************
@@ -538,7 +870,7 @@ void Emm_V5_Auto_Return_Sys_Params_Timed(uint8_t addr, SysParams_t s, uint16_t t
   cmd[i] = 0x6B; ++i;                   	// 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, i);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, i);
 }
 
 /**
@@ -580,7 +912,7 @@ void Emm_V5_Read_Sys_Params(uint8_t addr, SysParams_t s)
   cmd[i] = 0x6B; ++i;                   // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, i);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, i);
 //  HAL_UART_Transmit(&huart1, (uint8_t *)cmd, i, 100);
 }
 
@@ -607,7 +939,7 @@ void Emm_V5_Modify_Motor_ID(uint8_t addr, bool svF, uint8_t id)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -630,7 +962,7 @@ void Emm_V5_Modify_MicroStep(uint8_t addr, bool svF, uint8_t mstep)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -650,7 +982,7 @@ void Emm_V5_Modify_PDFlag(uint8_t addr, bool pdf)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -668,7 +1000,7 @@ void Emm_V5_Read_Opt_Param_Sta(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -693,7 +1025,7 @@ void Emm_V5_Modify_Motor_Type(uint8_t addr, bool svF, bool mottype)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -716,7 +1048,7 @@ void Emm_V5_Modify_Firmware_Type(uint8_t addr, bool svF, bool fwtype)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -739,7 +1071,7 @@ void Emm_V5_Modify_Ctrl_Mode(uint8_t addr, bool svF, bool ctrl_mode)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -762,7 +1094,7 @@ void Emm_V5_Modify_Motor_Dir(uint8_t addr, bool svF, bool dir)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -785,7 +1117,7 @@ void Emm_V5_Modify_Lock_Btn(uint8_t addr, bool svF, bool lock)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -808,7 +1140,7 @@ void Emm_V5_Modify_S_Vel(uint8_t addr, bool svF, bool s_vel)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 6);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 6);
 }
 
 /**
@@ -832,7 +1164,7 @@ void Emm_V5_Modify_OM_mA(uint8_t addr, bool svF, uint16_t om_ma)
   cmd[6] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 7);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 7);
 }
 
 /**
@@ -856,7 +1188,7 @@ void Emm_V5_Modify_FOC_mA(uint8_t addr, bool svF, uint16_t foc_mA)
   cmd[6] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 7);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 7);
 }
 
 /**
@@ -874,7 +1206,7 @@ void Emm_V5_Read_PID_Params(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -910,7 +1242,7 @@ void Emm_V5_Modify_PID_Params(uint8_t addr, bool svF, uint32_t kp, uint32_t ki, 
   cmd[16] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 17);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 17);
 }
 
 /**
@@ -929,7 +1261,7 @@ void Emm_V5_Read_DMX512_Params(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -971,7 +1303,7 @@ void Emm_V5_Modify_DMX512_Params(uint8_t addr, bool svF, uint16_t tch, uint8_t n
   cmd[18] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 19);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 19);
 }
 
 /**
@@ -989,7 +1321,7 @@ void Emm_V5_Read_Pos_Window(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -1013,7 +1345,7 @@ void Emm_V5_Modify_Pos_Window(uint8_t addr, bool svF, uint16_t prw)
   cmd[6] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 7);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 7);
 }
 
 /**
@@ -1031,7 +1363,7 @@ void Emm_V5_Read_Otocp(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -1061,7 +1393,7 @@ void Emm_V5_Modify_Otocp(uint8_t addr, bool svF, uint16_t otp, uint16_t ocp, uin
   cmd[10] =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 11);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 11);
 }
 
 /**
@@ -1079,7 +1411,7 @@ void Emm_V5_Read_Heart_Protect(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -1105,7 +1437,7 @@ void Emm_V5_Modify_Heart_Protect(uint8_t addr, bool svF, uint32_t hp)
   cmd[8]  =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 9);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 9);
 }
 
 /**
@@ -1123,7 +1455,7 @@ void Emm_V5_Read_Integral_Limit(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 3);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 3);
 }
 
 /**
@@ -1149,7 +1481,7 @@ void Emm_V5_Modify_Integral_Limit(uint8_t addr, bool svF, uint32_t il)
   cmd[8]  =  0x6B;                      // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 9);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 9);
 }
 
 /**********************************************************
@@ -1171,7 +1503,7 @@ void Emm_V5_Read_System_State_Params(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 /**
@@ -1190,7 +1522,7 @@ void Emm_V5_Read_Motor_Conf_Params(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 发送命令
-  HAL_UART_Transmit_DMA(&huart1, (uint8_t *)cmd, 4);
+  Emm_V5_Transmit_Frame(&huart1, (uint8_t *)cmd, 4);
 }
 
 
@@ -1216,7 +1548,7 @@ void Emm_V5_Read_Motor_Conf_Params(uint8_t addr)
   */
 void Emm_V5_MMCL_Trig_Encoder_Cal(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1225,7 +1557,7 @@ void Emm_V5_MMCL_Trig_Encoder_Cal(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**
@@ -1235,7 +1567,7 @@ void Emm_V5_MMCL_Trig_Encoder_Cal(uint8_t addr)
   */
 void Emm_V5_MMCL_Reset_Motor(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1244,7 +1576,7 @@ void Emm_V5_MMCL_Reset_Motor(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**
@@ -1254,7 +1586,7 @@ void Emm_V5_MMCL_Reset_Motor(uint8_t addr)
   */
 void Emm_V5_MMCL_Reset_CurPos_To_Zero(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1263,7 +1595,7 @@ void Emm_V5_MMCL_Reset_CurPos_To_Zero(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**
@@ -1273,7 +1605,7 @@ void Emm_V5_MMCL_Reset_CurPos_To_Zero(uint8_t addr)
   */
 void Emm_V5_MMCL_Reset_Clog_Pro(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1282,7 +1614,7 @@ void Emm_V5_MMCL_Reset_Clog_Pro(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**
@@ -1292,7 +1624,7 @@ void Emm_V5_MMCL_Reset_Clog_Pro(uint8_t addr)
   */
 void Emm_V5_MMCL_Restore_Motor(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1301,7 +1633,7 @@ void Emm_V5_MMCL_Restore_Motor(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**********************************************************
@@ -1316,7 +1648,7 @@ void Emm_V5_MMCL_Restore_Motor(uint8_t addr)
   */
 void Emm_V5_MMCL_En_Control(uint8_t addr, bool state, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1327,7 +1659,7 @@ void Emm_V5_MMCL_En_Control(uint8_t addr, bool state, bool snF)
   cmd[5] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 6; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 6U);
 }
 
 /**
@@ -1341,7 +1673,7 @@ void Emm_V5_MMCL_En_Control(uint8_t addr, bool state, bool snF)
   */
 void Emm_V5_MMCL_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
 
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1354,7 +1686,7 @@ void Emm_V5_MMCL_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t ac
   cmd[7] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 8; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 8U);
 }
 
 /**
@@ -1370,7 +1702,7 @@ void Emm_V5_MMCL_Vel_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t ac
   */
 void Emm_V5_MMCL_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, uint32_t clk, uint8_t raF, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
 
   // 装载命令
   cmd[0]  =  addr;                      // 地址
@@ -1388,7 +1720,7 @@ void Emm_V5_MMCL_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t ac
   cmd[12] =  0x6B;                      // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 13; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 13U);
 }
 
 /**
@@ -1402,7 +1734,7 @@ void Emm_V5_MMCL_Pos_Control(uint8_t addr, uint8_t dir, uint16_t vel, uint8_t ac
   */
 void Emm_V5_MMCL_Set_QPos_Params(uint8_t addr, uint16_t vel, uint8_t acc, uint8_t raF, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
 
   // 装载命令
   cmd[0]  =  addr;                      // 地址
@@ -1415,7 +1747,7 @@ void Emm_V5_MMCL_Set_QPos_Params(uint8_t addr, uint16_t vel, uint8_t acc, uint8_
   cmd[7] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 8; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 8U);
 }
 
 /**
@@ -1426,7 +1758,7 @@ void Emm_V5_MMCL_Set_QPos_Params(uint8_t addr, uint16_t vel, uint8_t acc, uint8_
   */
 void Emm_V5_MMCL_QPos_Control(uint8_t addr, int32_t clk)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
 
   // 装载命令
   cmd[0]  =  addr;                      // 地址
@@ -1438,7 +1770,7 @@ void Emm_V5_MMCL_QPos_Control(uint8_t addr, int32_t clk)
   cmd[6] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 7; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 7U);
 }
 
 /**
@@ -1449,7 +1781,7 @@ void Emm_V5_MMCL_QPos_Control(uint8_t addr, int32_t clk)
   */
 void Emm_V5_MMCL_Stop_Now(uint8_t addr, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1459,7 +1791,7 @@ void Emm_V5_MMCL_Stop_Now(uint8_t addr, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 5; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 5U);
 }
 
 /**
@@ -1469,7 +1801,7 @@ void Emm_V5_MMCL_Stop_Now(uint8_t addr, bool snF)
   */
 void Emm_V5_MMCL_Synchronous_motion(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1478,7 +1810,7 @@ void Emm_V5_MMCL_Synchronous_motion(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**********************************************************
@@ -1492,7 +1824,7 @@ void Emm_V5_MMCL_Synchronous_motion(uint8_t addr)
   */
 void Emm_V5_MMCL_Origin_Set_O(uint8_t addr, bool svF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1502,7 +1834,7 @@ void Emm_V5_MMCL_Origin_Set_O(uint8_t addr, bool svF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 5; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 5U);
 }
 
 /**
@@ -1514,7 +1846,7 @@ void Emm_V5_MMCL_Origin_Set_O(uint8_t addr, bool svF)
   */
 void Emm_V5_MMCL_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1524,7 +1856,7 @@ void Emm_V5_MMCL_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
   cmd[4] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 5; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 5U);
 }
 
 /**
@@ -1534,7 +1866,7 @@ void Emm_V5_MMCL_Origin_Trigger_Return(uint8_t addr, uint8_t o_mode, bool snF)
   */
 void Emm_V5_MMCL_Origin_Interrupt(uint8_t addr)
 {
-  uint8_t j = 0, cmd[16] = {0};
+  uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1543,7 +1875,7 @@ void Emm_V5_MMCL_Origin_Interrupt(uint8_t addr)
   cmd[3] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 4; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 4U);
 }
 
 /**
@@ -1562,7 +1894,7 @@ void Emm_V5_MMCL_Origin_Interrupt(uint8_t addr)
   */
 void Emm_V5_MMCL_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, uint8_t o_dir, uint16_t o_vel, uint32_t o_tm, uint16_t sl_vel, uint16_t sl_ma, uint16_t sl_ms, bool potF)
 {
-  uint8_t j = 0, cmd[32] = {0};
+  uint8_t cmd[32] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1587,7 +1919,7 @@ void Emm_V5_MMCL_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, ui
   cmd[19] =  0x6B;                      // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 20; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, 20U);
 }
 
 /**
@@ -1597,7 +1929,7 @@ void Emm_V5_MMCL_Origin_Modify_Params(uint8_t addr, bool svF, uint8_t o_mode, ui
   */
 void X_V2_MMCL_Origin_Read_SL_RP(uint8_t addr)
 {
-  uint8_t j = 0; __IO static uint8_t cmd[16] = {0};
+  __IO static uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0] =  addr;                       // 地址
@@ -1605,7 +1937,7 @@ void X_V2_MMCL_Origin_Read_SL_RP(uint8_t addr)
   cmd[2] =  0x6B;                       // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 3; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append((const uint8_t *)cmd, 3U);
 }
 
 /**
@@ -1617,7 +1949,7 @@ void X_V2_MMCL_Origin_Read_SL_RP(uint8_t addr)
   */
 void X_V2_MMCL_Origin_Modify_SL_RP(uint8_t addr, bool svF, uint16_t sl_rp)
 {
-  uint8_t j = 0; __IO static uint8_t cmd[16] = {0};
+  __IO static uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[0]  =  addr;                      // 地址
@@ -1629,7 +1961,7 @@ void X_V2_MMCL_Origin_Modify_SL_RP(uint8_t addr, bool svF, uint16_t sl_rp)
   cmd[6]  =  0x6B;                      // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < 7; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append((const uint8_t *)cmd, 7U);
 }
 
 /**********************************************************
@@ -1647,7 +1979,7 @@ void X_V2_MMCL_Origin_Modify_SL_RP(uint8_t addr, bool svF, uint16_t sl_rp)
   */
 void Emm_V5_MMCL_Auto_Return_Sys_Params_Timed(uint8_t addr, SysParams_t s, uint16_t time_ms)
 {
-  uint8_t i = 0, j = 0; uint8_t cmd[16] = {0};
+  uint8_t i = 0; uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[i] = addr; ++i;                   // 地址
@@ -1685,7 +2017,7 @@ void Emm_V5_MMCL_Auto_Return_Sys_Params_Timed(uint8_t addr, SysParams_t s, uint1
   cmd[i] = 0x6B; ++i;                   	// 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < i; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, i);
 }
 
 /**
@@ -1696,7 +2028,7 @@ void Emm_V5_MMCL_Auto_Return_Sys_Params_Timed(uint8_t addr, SysParams_t s, uint1
   */
 void Emm_V5_MMCL_Read_Sys_Params(uint8_t addr, SysParams_t s)
 {
-  uint8_t i = 0, j = 0; uint8_t cmd[16] = {0};
+  uint8_t i = 0; uint8_t cmd[16] = {0};
   
   // 装载命令
   cmd[i] = addr; ++i;                   // 地址
@@ -1727,7 +2059,7 @@ void Emm_V5_MMCL_Read_Sys_Params(uint8_t addr, SysParams_t s)
   cmd[i] = 0x6B; ++i;                   // 校验字节
   
   // 加载当前命令到多电机命令中
-  for(j=0; j < i; j++) { MMCL_cmd[MMCL_count] = cmd[j]; ++MMCL_count; }
+  (void)Emm_V5_MMCL_Append(cmd, i);
 }
 
 /**********************************************************

@@ -35,7 +35,9 @@
 #include "Emm_V5.h"
 #include "Servo_motor.h"
 #include "MPU9250.h"
+#include "all_init.h"
 #include "ZDTstepmotor.h"
+#include "control.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -83,22 +85,32 @@ uint8_t UART_DMA_Buf[TX_BUF_SIZE];
 int fputc(int ch, FILE *stream)
 {
     uint8_t c = ch;
-    HAL_UART_Transmit(&huart6, &c, 1, 0xFFFF);
+    HAL_UART_Transmit(&huart2, &c, 1, 0xFFFF);
     return ch;
 }
 
 void uart_printf(const char *format, ...)
 {
     va_list args;
-    uint16_t len;
+    int len;
 
-    while(huart6.gState != HAL_UART_STATE_READY);
+    /* This function runs from TIM2 IRQ: never wait for another IRQ here. */
+    if ((format == NULL) || (huart2.gState != HAL_UART_STATE_READY)){
+        return;    //如果格式为空或者串口状态不为就绪状态，直接返回
+    }
 
     va_start(args, format);
     len = vsnprintf((char*)UART_DMA_Buf, TX_BUF_SIZE, format, args);
     va_end(args);
 
-    HAL_UART_Transmit_DMA(&huart6, UART_DMA_Buf, len);
+    if (len <= 0) {
+        return;
+    }
+    if (len >= TX_BUF_SIZE) {
+        len = TX_BUF_SIZE - 1;
+    }
+
+    (void)HAL_UART_Transmit_DMA(&huart2, UART_DMA_Buf, (uint16_t)len);
 }
 
 /* USER CODE END 0 */
@@ -137,79 +149,34 @@ int main(void)
   MX_TIM2_Init();
   MX_TIM9_Init();
   MX_USART6_UART_Init();
+  MX_USART2_UART_Init();
   /* USER CODE BEGIN 2 */
-  HAL_TIM_Base_Start_IT(&htim2);
+
   // HAL_TIM_PWM_Start(&htim9,TIM_CHANNEL_1);
   // HAL_TIM_PWM_Start(&htim9,TIM_CHANNEL_2);
-  // icm_init();
+  icm_init();  
+  HAL_TIM_Base_Start_IT(&htim2);
 
-  __HAL_UART_CLEAR_IDLEFLAG(&huart1); 						
-  __HAL_UART_ENABLE_IT(&huart1, UART_IT_IDLE); 				
-  HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN); 
+	// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
 
+	// HAL_Delay(2000);
+	// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
 
+	Chassis_Init(&huart1);
 
-//	Chassis_Init(&huart1);
+	Chassis_Test();
 
-//	Chassis_Test();
-
-  HAL_Delay(500);
-  Emm_V5_Vel_Control(1, 0, 1000, 0, 0);
-		while(rxFrameFlag == false);
-		rxFrameFlag = false;
-
-  HAL_Delay(500);
-  
-	Emm_V5_Read_Sys_Params(1, S_VEL);
-		while(rxFrameFlag == false);
-		rxFrameFlag = false;
-
-	  if(rxCmd[0] == 1 && rxCmd[1] == 0x35 && rxCount == 6)
-  {
-    vel = (uint16_t)(
-                      ((uint16_t)rxCmd[3] << 8)   |
-                      ((uint16_t)rxCmd[4] << 0)
-                    );
-
-
-    Motor_Vel = vel;
-
-   
-    if(rxCmd[2]) { Motor_Vel = -Motor_Vel; }
-  }
 	// Servo_test();
+
+  // Control_test();
   /* USER CODE END 2 */
 
   /* Infinite loop */
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-	    HAL_Delay(10);
-		Emm_V5_Vel_Control(1, 0, 1000, 0, 0);
-		while(rxFrameFlag == false);
-		rxFrameFlag = false;
+    /* Motor TX queue service runs from the TIM2 callback. */
 
-		HAL_Delay(10);
-  
-		Emm_V5_Read_Sys_Params(1, S_VEL);
-		while(rxFrameFlag == false);
-		rxFrameFlag = false;
-
-		if(rxCmd[0] == 1 && rxCmd[1] == 0x35 && rxCount == 6)
-		{
-		vel = (uint16_t)(
-                      ((uint16_t)rxCmd[3] << 8)   |
-                      ((uint16_t)rxCmd[4] << 0)
-                    );
-		Motor_Vel = vel;   
-    if(rxCmd[2]) { Motor_Vel = -Motor_Vel; }
-  }
-
-    /* USER CODE END WHILE */
-
-    /* USER CODE BEGIN 3 */
-
-	  
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
@@ -238,7 +205,7 @@ void SystemClock_Config(void)
   RCC_OscInitStruct.HSEState = RCC_HSE_ON;
   RCC_OscInitStruct.PLL.PLLState = RCC_PLL_ON;
   RCC_OscInitStruct.PLL.PLLSource = RCC_PLLSOURCE_HSE;
-  RCC_OscInitStruct.PLL.PLLM = 4;
+  RCC_OscInitStruct.PLL.PLLM = 12;
   RCC_OscInitStruct.PLL.PLLN = 168;
   RCC_OscInitStruct.PLL.PLLP = RCC_PLLP_DIV2;
   RCC_OscInitStruct.PLL.PLLQ = 4;
@@ -267,6 +234,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 {
 	if(htim->Instance==htim2.Instance)
 	{
+    Chassis_Process();
+
 		static uint16_t count1=0;
 		static uint16_t count2=0;
 
@@ -279,18 +248,17 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       // ICM42688_ReadAccel(&hi2c2, icm_accel);
       // ICM42688_ReadGyro(&hi2c2, icm_gyro);
       // ICM_getValues();
-      // ICM_getEulerianAngles();
+      ICM_getEulerianAngles();
+
+
 			count1=0;
 		}		
     if(count2>=1000)
     {
-//		a++;b++;
-//		a%=120;b%=120;
-//	uart_printf("a=%d\r\n", a);
-	
-//	printf("b=%d\r\n", b);
+      printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
+        eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
 
-
+		// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
   	  // if(ICM42688_ReadAccel(&hi2c2, icm_accel) == HAL_OK)
 		  // {
 			//    printf("AX=%6d, AY=%6d, AZ=%6d\r\n", icm_accel[0], icm_accel[1], icm_accel[2]);      
@@ -300,19 +268,23 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		  // {
 			//   printf("GX=%6d, GY=%6d, GZ=%6d\r\n", icm_gyro[0], icm_gyro[1], icm_gyro[2]);
 		  // }
-		printf("%.2f\r\n",Motor_Vel);
+//		printf("%.2f\r\n",Motor_Vel);
 		count2=0;
     }
 	}
 }
 
-void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
+void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
-	if(huart==&huart1)
-	{
-		
-	}
+  Emm_V5_TxCpltCallback(huart);
 }
+
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  /* TX DMA errors release the queued frame; USART1 has no RX path. */
+  Emm_V5_UartErrorCallback(huart);
+}
+
 /* USER CODE END 4 */
 
 /**

@@ -59,8 +59,8 @@
 
 /* External variables --------------------------------------------------------*/
 extern TIM_HandleTypeDef htim2;
-extern DMA_HandleTypeDef hdma_usart1_rx;
 extern DMA_HandleTypeDef hdma_usart1_tx;
+extern DMA_HandleTypeDef hdma_usart2_tx;
 extern UART_HandleTypeDef huart1;
 /* USER CODE BEGIN EV */
 
@@ -205,6 +205,20 @@ void SysTick_Handler(void)
 /******************************************************************************/
 
 /**
+  * @brief This function handles DMA1 stream6 global interrupt.
+  */
+void DMA1_Stream6_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA1_Stream6_IRQn 0 */
+
+  /* USER CODE END DMA1_Stream6_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_usart2_tx);
+  /* USER CODE BEGIN DMA1_Stream6_IRQn 1 */
+
+  /* USER CODE END DMA1_Stream6_IRQn 1 */
+}
+
+/**
   * @brief This function handles TIM2 global interrupt.
   */
 void TIM2_IRQHandler(void)
@@ -223,20 +237,25 @@ void TIM2_IRQHandler(void)
   */
 void USART1_IRQHandler(void)
 {
+#if 0
   /* USER CODE BEGIN USART1_IRQn 0 */
-	if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLE£¬¼ì²âµ½¿ÕÏÐÏßÂ·
+	if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLEï¿½ï¿½ï¿½ï¿½âµ½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Â·
 	{
-		__HAL_UART_CLEAR_IDLEFLAG(&huart1); // Çå³ýIDLE±êÖ¾
-
-		HAL_UART_DMAStop(&huart1); // Í£Ö¹DMA£¬ÎªÁËÖØÐÂÉèÖÃDMA·¢ËÍ¶àÉÙÊý¾Ý
+		__HAL_UART_CLEAR_IDLEFLAG(&huart1); // ï¿½ï¿½ï¿½IDLEï¿½ï¿½Ö¾
 
 		rxCount = CMD_LEN - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
+		HAL_UART_AbortReceive(&huart1); /* RX DMA only; keep TX DMA running */ // Í£Ö¹DMAï¿½ï¿½Îªï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½DMAï¿½ï¿½ï¿½Í¶ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½
+
+		if (rxCount > 0U) {
+			ZDT_ProcessRxData((const uint8_t *)rxCmd, rxCount);// ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Õµï¿½ï¿½ï¿½ï¿½Ù¶ï¿½ï¿½ï¿½ï¿½ï¿½
+		}
 		 
-		rxFrameFlag = true; // ÖÃÎ»Ò»Ö¡ÃüÁî½ÓÊÕÍê±Ï±êÖ¾Î»
+		rxFrameFlag = true; // ï¿½ï¿½Î»Ò»Ö¡ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï±ï¿½Ö¾Î»
 		
-		HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN);//ÓÃrxCmdÀ´½ÓÊÕÐÅÏ¢
+		HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN);//ï¿½ï¿½rxCmdï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½Ï¢
 	}
   /* USER CODE END USART1_IRQn 0 */
+ #endif
   HAL_UART_IRQHandler(&huart1);
   /* USER CODE BEGIN USART1_IRQn 1 */
 
@@ -244,8 +263,23 @@ void USART1_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles USART2 global interrupt.
+  */
+void USART2_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART2_IRQn 0 */
+
+  /* USER CODE END USART2_IRQn 0 */
+  HAL_UART_IRQHandler(&huart2);
+  /* USER CODE BEGIN USART2_IRQn 1 */
+
+  /* USER CODE END USART2_IRQn 1 */
+}
+
+/**
   * @brief This function handles DMA2 stream2 global interrupt.
   */
+#if 0
 void DMA2_Stream2_IRQHandler(void)
 {
   /* USER CODE BEGIN DMA2_Stream2_IRQn 0 */
@@ -256,6 +290,7 @@ void DMA2_Stream2_IRQHandler(void)
 
   /* USER CODE END DMA2_Stream2_IRQn 1 */
 }
+#endif
 
 /**
   * @brief This function handles DMA2 stream7 global interrupt.

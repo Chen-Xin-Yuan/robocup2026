@@ -42,10 +42,10 @@ typedef struct {
     float Xdata;
     float Ydata;
     float Zdata;
-} gyro_param_t;//专门存放陀螺仪零偏
+} gyro_offset_param_t;//专门存放陀螺仪零偏
 
 
-extern gyro_param_t GyroOffset;
+extern gyro_offset_param_t GyroOffset;
 
 extern euler_param_t eulerAngle;
 extern float angle_Z,angle_R,angle_P;
@@ -60,6 +60,7 @@ void ICM_AHRSupdate(float gx, float gy, float gz, float ax, float ay, float az);
 void ICM_getValues(void);
 
 void ICM_getEulerianAngles(void);
+void Kalman_ResetEulerZero(void);
 
 /*================== IMU融合对外接口 ==================*/
 float Kalman_GetYawRad(void);       // 获取IMU偏航角 (rad, 连续无跳变)

@@ -2,6 +2,7 @@
 #include "main.h"
 #include "motor_def.h"
 #include "ZDTstepmotor.h"
+#include "Emm_V5.h"
 #include "usart.h"
 #include <math.h>
 #include <string.h>
@@ -12,10 +13,33 @@
 
 StepMotorZDT_t Motor1, Motor2, Motor3, Motor4;
 
+#define CHASSIS_TX_FRAMES_PER_UPDATE    5U
 
-static float wheel_perimeter = 0.0f;
+volatile uint32_t Chassis_TxRejectedBatches = 0U;
+
+
 static float rotate_radius = 0.0f;
 static float wheel_default_speed = 0.2f;
+
+/**
+ * @brief 前置检查: 确认四个麦轮电机的 USART1 句柄一致，并且发送队列有足够的可用槽位。
+ *
+ * One update submits four motor frames plus one broadcast sync frame. The
+ * current firmware has a single foreground producer, while the UART ISR only
+ * removes frames, so this preflight prevents a group from being partially
+ * queued. A rejected group leaves all four previous motor targets untouched.
+ */
+static bool chassis_tx_batch_available(void)
+{
+    if ((Motor1._USART != &huart1) || (Motor2._USART != &huart1) ||
+        (Motor3._USART != &huart1) || (Motor4._USART != &huart1) ||
+        (Emm_V5_TxGetFreeSlots() < CHASSIS_TX_FRAMES_PER_UPDATE)) {
+        Chassis_TxRejectedBatches++;
+        return false;
+    }
+
+    return true;
+}
 
 /*================== 麦轮运动学核心 ==================*/
 
@@ -50,13 +74,12 @@ static float wheel_default_speed = 0.2f;
 static void chassis_inverse_kinematics(float vx, float vy, float omega,
                                        float *v1, float *v2, float *v3, float *v4)
 {
-    float v_rot = -omega * rotate_radius;
-    float k = CHASSIS_SQRT2;
+    float v_rot = omega * rotate_radius;
 
-    *v1 = (vy - vx + v_rot) * k;
-    *v2 = (vy + vx - v_rot) * k;
-    *v3 = (vy + vx + v_rot) * k;
-    *v4 = (vy - vx - v_rot) * k;
+    *v1 = vy - vx - v_rot;
+    *v2 = vy + vx + v_rot;
+    *v3 = vy + vx - v_rot;
+    *v4 = vy - vx + v_rot;
 }
 
 /**
@@ -69,7 +92,7 @@ static void chassis_inverse_kinematics(float vx, float vy, float omega,
 static void chassis_forward_kinematics(float v1, float v2, float v3, float v4,
                                        float *vx, float *vy, float *omega)
 {
-    const float inv = 1.0f / (4.0f * CHASSIS_SQRT2);
+    const float inv = 0.25f;
 
     *vy    = ( v1 + v2 + v3 + v4) * inv;
     *vx    = (-v1 + v2 + v3 - v4) * inv;
@@ -96,9 +119,7 @@ static float chassis_max_float(int n, ...)
 
 void Chassis_Init(UART_HandleTypeDef *_USART)
 {
-    wheel_perimeter = CHASSIS_PI * CHASSIS_WHEEL_DIA;
-    rotate_radius = sqrtf((CHASSIS_WIDTH / 2.0f) * (CHASSIS_WIDTH / 2.0f)
-                        + (CHASSIS_LENGTH / 2.0f) * (CHASSIS_LENGTH / 2.0f));
+    rotate_radius = (CHASSIS_WIDTH + CHASSIS_LENGTH) / 2.0f;
 
     Step_ZDT_Init(&Motor1, 1, _USART, 0, CHASSIS_WHEEL_DIA, false);
     Step_ZDT_Init(&Motor2, 2, _USART, 1, CHASSIS_WHEEL_DIA, false);
@@ -107,6 +128,12 @@ void Chassis_Init(UART_HandleTypeDef *_USART)
 
     Chassis_Setdefaultspeed(1.0f);
     Chassis_stop();
+}
+
+
+void Chassis_Process(void)
+{
+    Emm_V5_Process();
 }
 
 void Chassis_Setdefaultspeed(float v)
@@ -119,6 +146,9 @@ void Chassis_Setdefaultspeed(float v)
 void Chassis_Move(float vx, float vy, float omega)
 {
     float v1, v2, v3, v4;
+
+    if (!chassis_tx_batch_available()) return;
+
     chassis_inverse_kinematics(vx, vy, omega, &v1, &v2, &v3, &v4);
 
     set_speed_target(&Motor1, v1);
@@ -129,6 +159,10 @@ void Chassis_Move(float vx, float vy, float omega)
 
 void Chassis_stop(void)
 {
+    /* A stop supersedes stale motion updates waiting behind the active frame. */
+    Emm_V5_TxDiscardPending();
+    if (!chassis_tx_batch_available()) return;
+
     set_speed_target(&Motor1, 0.0f);
     set_speed_target(&Motor2, 0.0f);
     set_speed_target(&Motor3, 0.0f);
@@ -137,6 +171,8 @@ void Chassis_stop(void)
 
 void Chassis_Set4MotorSpeed(float v1, float v2, float v3, float v4)
 {
+    if (!chassis_tx_batch_available()) return;
+
     set_speed_target(&Motor1, v1);
     set_speed_target(&Motor2, v2);
     set_speed_target(&Motor3, v3);
@@ -146,18 +182,17 @@ void Chassis_Set4MotorSpeed(float v1, float v2, float v3, float v4)
 /*================== 位置控制 (统一接口) ==================*/
 
 /**
- * @brief 输入目标底盘位移 (sx, sy) + 旋转角度 (theta_deg)，输出预计执行时间 (s)
+ * @brief 输入目标底盘位移 (sx, sy) + 旋转角度 (theta_deg)，输出预计执行时间 (ms)
  */
 float Chassis_MovePos(float sx, float sy, float theta_deg)
 {
     float theta_rad = theta_deg * CHASSIS_PI / 180.0f;
     float s_rot = theta_rad * rotate_radius;
 
-    float k = CHASSIS_SQRT2;
-    float s1 = (sy - sx + s_rot) * k;
-    float s2 = (sy + sx - s_rot) * k;
-    float s3 = (sy + sx + s_rot) * k;
-    float s4 = (sy - sx - s_rot) * k;
+    float s1 = sy - sx - s_rot;
+    float s2 = sy + sx + s_rot;
+    float s3 = sy + sx - s_rot;
+    float s4 = sy - sx + s_rot;
 
     float t1 = fabsf(s1) / wheel_default_speed;
     float t2 = fabsf(s2) / wheel_default_speed;
@@ -166,13 +201,14 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     float t  = chassis_max_float(4, t1, t2, t3, t4);
 
     if (t < 0.001f) return 0.0f;
+    if (!chassis_tx_batch_available()) return -1.0f;
 
     set_speed_pos_target(&Motor1, s1 / t, s1);
     set_speed_pos_target(&Motor2, s2 / t, s2);
     set_speed_pos_target(&Motor3, s3 / t, s3);
     set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
-    return (t+0.3f); // 预计执行时间 + 0.3s 缓冲
+    return (t + 0.3f) * 1000.0f;
 }
 
 /*================== 状态查询 ==================*/
@@ -190,10 +226,6 @@ float Chassis_GetLinearSpeed(uint8_t motor_ID)
 
 void Chassis_GetSpeed(void)
 {
-    Motor1.motor_controller_t.real_velocity = get_linear_speed(&Motor1);
-    Motor2.motor_controller_t.real_velocity = get_linear_speed(&Motor2);
-    Motor3.motor_controller_t.real_velocity = get_linear_speed(&Motor3);
-    Motor4.motor_controller_t.real_velocity = get_linear_speed(&Motor4);
 }
 
 /**
@@ -220,10 +252,148 @@ void Chassis_GetBodySpeed(float *vx, float *vy, float *omega)
 
 void Chassis_Test(void)
 {
-    Chassis_Init(&huart1);
+#if 1
+    float duration_ms;
+    uint32_t wait_ms;
+    uint32_t start_tick;
+
     Chassis_Setdefaultspeed(0.2f);
 
-    float t = Chassis_MovePos(0.0f, 1.0f, 0.0f);
-    HAL_Delay((uint32_t)(t * 1000.0f + 500.0f));
-}
+    // set_speed_target(&Motor1, 0.2f);
+    // set_speed_target(&Motor2, 0.1f);
+    // set_speed_target(&Motor3, 0.2f);
+    // set_speed_target(&Motor4, 0.1f);
 
+    do {
+        duration_ms = Chassis_MovePos(0.0f, 0.5f, 0.0f);
+        if (duration_ms < 0.0f) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    } while (duration_ms < 0.0f);
+    if (duration_ms > 0.0f) {
+        wait_ms = (uint32_t)(duration_ms + 0.5f);
+        start_tick = HAL_GetTick();
+        while ((uint32_t)(HAL_GetTick() - start_tick) < wait_ms) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    }
+
+    do {
+        duration_ms = Chassis_MovePos(0.1f, 0.0f, 0.0f);
+        if (duration_ms < 0.0f) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    } while (duration_ms < 0.0f);
+    if (duration_ms > 0.0f) {
+        wait_ms = (uint32_t)(duration_ms + 0.5f);
+        start_tick = HAL_GetTick();
+        while ((uint32_t)(HAL_GetTick() - start_tick) < wait_ms) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    }
+
+    do {
+        duration_ms = Chassis_MovePos(0.0f, 0.0f, 90.0f);
+        if (duration_ms < 0.0f) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    } while (duration_ms < 0.0f);
+    if (duration_ms > 0.0f) {
+        wait_ms = (uint32_t)(duration_ms + 0.5f);
+        start_tick = HAL_GetTick();
+        while ((uint32_t)(HAL_GetTick() - start_tick) < wait_ms) {
+            Chassis_Process();
+            HAL_Delay(1U);
+        }
+    }
+
+    // HAL_Delay(Chassis_MovePos(0.0f, 0.5f, 0.0f));
+    // HAL_Delay(Chassis_MovePos(0.1f, 0.0f, 0.0f));
+    // HAL_Delay(Chassis_MovePos(0.0f, 0.0f, 90.0f));
+#endif
+
+#if 0
+    const uint16_t test_rpm = 60U;
+    const uint32_t test_pulses = 3200U;
+    const uint32_t motor_test_interval_ms = 1500U;
+
+    /* Let the synchronized stop submitted by Chassis_Init finish first. */
+    HAL_Delay(50U);
+
+    /* Test IDs 1-4 independently. snF=false executes each frame immediately. */
+    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
+                       test_rpm, 0U, test_pulses, 0U, false);
+    HAL_Delay(motor_test_interval_ms);
+
+    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
+                       test_rpm, 0U, test_pulses, 0U, false);
+    HAL_Delay(motor_test_interval_ms);
+
+    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
+                       test_rpm, 0U, test_pulses, 0U, false);
+    HAL_Delay(motor_test_interval_ms);
+
+    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
+                       test_rpm, 0U, test_pulses, 0U, false);
+    HAL_Delay(motor_test_interval_ms);
+#endif
+
+#if 0
+    const uint16_t concurrent_test_rpm = 60U;
+    const uint32_t concurrent_test_pulses = 3200U;
+    const uint32_t command_interval_ms = 10U;
+
+    /* Start all motors without synchronization to test concurrent operation. */
+    HAL_Delay(50U);
+
+    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
+                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
+    HAL_Delay(command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
+                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
+    HAL_Delay(command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
+                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
+    HAL_Delay(command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
+                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
+    HAL_Delay(1500U);
+#endif
+
+#if 0
+    const uint16_t sync_test_rpm = 60U;
+    const uint32_t sync_test_pulses = 3200U;
+    const uint32_t sync_command_interval_ms = 2U;
+
+    /* Load four pending commands, then trigger them with one broadcast frame. */
+    HAL_Delay(50U);
+
+    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
+                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
+    HAL_Delay(sync_command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
+                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
+    HAL_Delay(sync_command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
+                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
+    HAL_Delay(sync_command_interval_ms);
+
+    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
+                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
+
+    /* Leave time for motor 4 to accept and cache its command before triggering. */
+    HAL_Delay(50U);
+    Emm_V5_Synchronous_motion(0U);
+    HAL_Delay(1500U);
+#endif
+}

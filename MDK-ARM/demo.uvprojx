@@ -340,7 +340,7 @@
               <MiscControls></MiscControls>
               <Define>USE_HAL_DRIVER,STM32F407xx</Define>
               <Undefine></Undefine>
-              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Hardware;../Software;../Software/Navigation;../seekfree_lib</IncludePath>
+              <IncludePath>../Core/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc;../Drivers/STM32F4xx_HAL_Driver/Inc/Legacy;../Drivers/CMSIS/Device/ST/STM32F4xx/Include;../Drivers/CMSIS/Include;../Hardware;../Software;../Software/Navigation;../seekfree_lib;..\Task</IncludePath>
             </VariousControls>
           </Cads>
           <Aads>
@@ -987,16 +987,6 @@
               <FilePath>..\Software\icm42688.h</FilePath>
             </File>
             <File>
-              <FileName>MPU9250.c</FileName>
-              <FileType>1</FileType>
-              <FilePath>..\Software\MPU9250.c</FilePath>
-            </File>
-            <File>
-              <FileName>MPU9250.h</FileName>
-              <FileType>5</FileType>
-              <FilePath>..\Software\MPU9250.h</FilePath>
-            </File>
-            <File>
               <FileName>Emm_V5.c</FileName>
               <FileType>1</FileType>
               <FilePath>..\Software\Emm_V5.c</FilePath>
@@ -1005,6 +995,26 @@
               <FileName>Emm_V5.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\Software\Emm_V5.h</FilePath>
+            </File>
+            <File>
+              <FileName>all_init.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Software\all_init.c</FilePath>
+            </File>
+            <File>
+              <FileName>all_init.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Software\all_init.h</FilePath>
+            </File>
+            <File>
+              <FileName>pid.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Software\pid.c</FilePath>
+            </File>
+            <File>
+              <FileName>pid.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Software\pid.h</FilePath>
             </File>
           </Files>
         </Group>
@@ -1015,6 +1025,21 @@
               <FileName>zf_common_headfile.h</FileName>
               <FileType>5</FileType>
               <FilePath>..\seekfree_lib\zf_common_headfile.h</FilePath>
+            </File>
+          </Files>
+        </Group>
+        <Group>
+          <GroupName>Task</GroupName>
+          <Files>
+            <File>
+              <FileName>control.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Task\control.c</FilePath>
+            </File>
+            <File>
+              <FileName>control.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Task\control.h</FilePath>
             </File>
           </Files>
         </Group>

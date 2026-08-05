@@ -4,10 +4,6 @@
 #include "i2c.h"
 #include <math.h>
 
-// int16_t icm_accel[3];   // 加速度原始值
-// int16_t icm_gyro[3];    // 角速度原始值
-// float icm_accel_g[3];   // 转换后加速度 g值
-// float icm_gyro_dps[3];  // 转换后角速度 dps
 
 // int16_t gyro_offset[3];
 
