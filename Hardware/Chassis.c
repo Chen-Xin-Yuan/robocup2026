@@ -126,7 +126,7 @@ void Chassis_Init(UART_HandleTypeDef *_USART)
     Step_ZDT_Init(&Motor3, 3, _USART, 0, CHASSIS_WHEEL_DIA, false);
     Step_ZDT_Init(&Motor4, 4, _USART, 1, CHASSIS_WHEEL_DIA, true);
 
-    Chassis_Setdefaultspeed(1.0f);
+    Chassis_Setdefaultspeed(0.2f);
     Chassis_stop();
 }
 
@@ -157,16 +157,46 @@ void Chassis_Move(float vx, float vy, float omega)
     set_speed_target(&Motor4, v4);
 }
 
+void Chassis_TrackDifferential(float forward_speed, float pid_output)
+{
+    float correction_speed;
+    float left_speed;
+    float right_speed;
+
+    /* 灰度 PID 输出按 RPM 解释，再转换为轮缘线速度。 */
+    correction_speed = pid_output
+                     * (CHASSIS_PI * CHASSIS_WHEEL_DIA / 60.0f);
+
+    /* 正修正量让左轮更快、右轮更慢，使底盘向右转。 */
+    left_speed = forward_speed + correction_speed;
+    right_speed = forward_speed - correction_speed;
+
+    Chassis_Set4MotorSpeed(left_speed,
+                           right_speed,
+                           left_speed,
+                           right_speed);
+}
+
 void Chassis_stop(void)
 {
     /* A stop supersedes stale motion updates waiting behind the active frame. */
     Emm_V5_TxDiscardPending();
     if (!chassis_tx_batch_available()) return;
 
-    set_speed_target(&Motor1, 0.0f);
-    set_speed_target(&Motor2, 0.0f);
-    set_speed_target(&Motor3, 0.0f);
-    set_speed_target(&Motor4, 0.0f);
+    Motor1.motor_controller_t.tar_velocity = 0.0f;
+    Motor2.motor_controller_t.tar_velocity = 0.0f;
+    Motor3.motor_controller_t.tar_velocity = 0.0f;
+    Motor4.motor_controller_t.tar_velocity = 0.0f;
+    Motor1.motor_controller_t.tar_rpm = 0;
+    Motor2.motor_controller_t.tar_rpm = 0;
+    Motor3.motor_controller_t.tar_rpm = 0;
+    Motor4.motor_controller_t.tar_rpm = 0;
+
+    Emm_V5_Stop_Now(Motor1.motor_controller_t.id, true);
+    Emm_V5_Stop_Now(Motor2.motor_controller_t.id, true);
+    Emm_V5_Stop_Now(Motor3.motor_controller_t.id, true);
+    Emm_V5_Stop_Now(Motor4.motor_controller_t.id, true);
+    Emm_V5_Synchronous_motion(0U);
 }
 
 void Chassis_Set4MotorSpeed(float v1, float v2, float v3, float v4)
@@ -208,7 +238,7 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     set_speed_pos_target(&Motor3, s3 / t, s3);
     set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
-    return (t + 0.3f) * 1000.0f;
+    return (t * 1000.0f);
 }
 
 /*================== 状态查询 ==================*/
@@ -258,12 +288,6 @@ void Chassis_Test(void)
     uint32_t start_tick;
 
     Chassis_Setdefaultspeed(0.2f);
-
-    // set_speed_target(&Motor1, 0.2f);
-    // set_speed_target(&Motor2, 0.1f);
-    // set_speed_target(&Motor3, 0.2f);
-    // set_speed_target(&Motor4, 0.1f);
-
     do {
         duration_ms = Chassis_MovePos(0.0f, 0.5f, 0.0f);
         if (duration_ms < 0.0f) {
@@ -315,85 +339,5 @@ void Chassis_Test(void)
     // HAL_Delay(Chassis_MovePos(0.0f, 0.5f, 0.0f));
     // HAL_Delay(Chassis_MovePos(0.1f, 0.0f, 0.0f));
     // HAL_Delay(Chassis_MovePos(0.0f, 0.0f, 90.0f));
-#endif
-
-#if 0
-    const uint16_t test_rpm = 60U;
-    const uint32_t test_pulses = 3200U;
-    const uint32_t motor_test_interval_ms = 1500U;
-
-    /* Let the synchronized stop submitted by Chassis_Init finish first. */
-    HAL_Delay(50U);
-
-    /* Test IDs 1-4 independently. snF=false executes each frame immediately. */
-    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
-                       test_rpm, 0U, test_pulses, 0U, false);
-    HAL_Delay(motor_test_interval_ms);
-
-    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
-                       test_rpm, 0U, test_pulses, 0U, false);
-    HAL_Delay(motor_test_interval_ms);
-
-    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
-                       test_rpm, 0U, test_pulses, 0U, false);
-    HAL_Delay(motor_test_interval_ms);
-
-    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
-                       test_rpm, 0U, test_pulses, 0U, false);
-    HAL_Delay(motor_test_interval_ms);
-#endif
-
-#if 0
-    const uint16_t concurrent_test_rpm = 60U;
-    const uint32_t concurrent_test_pulses = 3200U;
-    const uint32_t command_interval_ms = 10U;
-
-    /* Start all motors without synchronization to test concurrent operation. */
-    HAL_Delay(50U);
-
-    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
-                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
-    HAL_Delay(command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
-                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
-    HAL_Delay(command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
-                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
-    HAL_Delay(command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
-                       concurrent_test_rpm, 0U, concurrent_test_pulses, 0U, false);
-    HAL_Delay(1500U);
-#endif
-
-#if 0
-    const uint16_t sync_test_rpm = 60U;
-    const uint32_t sync_test_pulses = 3200U;
-    const uint32_t sync_command_interval_ms = 2U;
-
-    /* Load four pending commands, then trigger them with one broadcast frame. */
-    HAL_Delay(50U);
-
-    Emm_V5_Pos_Control(Motor1.motor_controller_t.id, (uint8_t)Motor1._dir,
-                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
-    HAL_Delay(sync_command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor2.motor_controller_t.id, (uint8_t)Motor2._dir,
-                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
-    HAL_Delay(sync_command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor3.motor_controller_t.id, (uint8_t)Motor3._dir,
-                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
-    HAL_Delay(sync_command_interval_ms);
-
-    Emm_V5_Pos_Control(Motor4.motor_controller_t.id, (uint8_t)Motor4._dir,
-                       sync_test_rpm, 0U, sync_test_pulses, 0U, true);
-
-    /* Leave time for motor 4 to accept and cache its command before triggering. */
-    HAL_Delay(50U);
-    Emm_V5_Synchronous_motion(0U);
-    HAL_Delay(1500U);
 #endif
 }

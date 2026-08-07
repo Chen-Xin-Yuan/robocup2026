@@ -41,6 +41,14 @@ void Chassis_Setdefaultspeed(float v);
 void Chassis_Move(float vx, float vy, float omega);
 
 /**
+ * @brief 差速循迹速度模式
+ * @param forward_speed 前进线速度 (m/s)，前方为正
+ * @param pid_output    灰度 PID 输出，作为左右轮转速差 (RPM)
+ * @note  pid_output 为正时向右修正；左侧为电机 1/3，右侧为电机 2/4。
+ */
+void Chassis_TrackDifferential(float forward_speed, float pid_output);
+
+/**
  * @brief 底盘位置控制 (麦轮精确解算, 统一接口)
  * @param sx        横向位移 (m), 右侧为正
  * @param sy        纵向位移 (m), 前方为正

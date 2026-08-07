@@ -31,6 +31,7 @@
 "demo\zdtstepmotor.o"
 "demo\motor_def.o"
 "demo\servo_motor.o"
+"demo\gray.o"
 "demo\flash.o"
 "demo\kalman.o"
 "demo\navigation.o"
@@ -38,6 +39,7 @@
 "demo\emm_v5.o"
 "demo\all_init.o"
 "demo\pid.o"
+"demo\hardware_iic.o"
 "demo\control.o"
 --library_type=microlib --strict --scatter "demo\demo.sct"
 --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols

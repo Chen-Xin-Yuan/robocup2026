@@ -12,66 +12,60 @@ extern "C" {
 #define CONTROL_DEG_TO_RAD         (CONTROL_PI / 180.0f)
 #define CONTROL_RAD_TO_DEG         (180.0f / CONTROL_PI)
 
-#define CONTROL_DEFAULT_KP         3.0f
-#define CONTROL_DEFAULT_KI         0.0f
-#define CONTROL_DEFAULT_KD         0.08f
-#define CONTROL_DEFAULT_MAX_OMEGA  2.0f
-#define CONTROL_DEFAULT_DEADBAND   0.01f
-#define CONTROL_DEFAULT_ARRIVE_ERR 0.02f
-#define CONTROL_DEFAULT_ARRIVE_W   0.05f
+#define CONTROL_TEST_LOOP_DELAY_MS       20U
 
 // Angle-loop runtime state.
 typedef struct
 {
-    float target_yaw_rad;
-    float feedback_yaw_rad;
-    float error_yaw_rad;
-    float omega_cmd_rad_s;
+    float target_yaw_deg;//目标yaw角度
+    float feedback_yaw_deg;//当前yaw角度
+    float error_yaw_deg;//误差yaw角度
+    float omega_cmd_deg_s;//角速度微调,由当前切换到目标
 
-    float max_omega_rad_s;
-    float arrive_error_rad;
-    float arrive_omega_rad_s;
+    float max_omega_deg_s;//最大角速度
+    float arrive_error_deg;//角度误差阈值
+    float arrive_omega_deg_s;//角速度误差阈值
 
-    uint8_t enabled;
-    uint8_t arrived;
+    uint8_t enabled;//是否使能角度环
+    uint8_t arrived;//是否到达目标角度
+
+    //用位置环粗调一段距离后再切换到角度环微调,相关状态量
+    uint8_t coarse_turn_pending;//是否_pending粗调
+    uint8_t coarse_turn_active;//是否正在粗调
+    uint8_t coarse_turn_stop_sent;//粗调前是否已经发送停止命令
+    uint32_t coarse_turn_ready_tick;//允许发送粗调位置命令的时间戳
+    uint32_t coarse_turn_end_tick;//粗调结束时间戳
 } Control_t;
 
 extern Control_t Control;
-extern PID_t Control_AnglePID;
 
-// Initialize the angle loop and default PID values.
+/*================== 需要调用的闭环控制函数 ==================*/
+
+// Initialize the angle loop and tuned PID values.
 void Control_Init(void);
 // Reset control state but keep PID gains.
 void Control_Reset(void);
 // Enable or disable the angle loop.
 void Control_Enable(uint8_t enable);
 
-// Set an absolute target yaw in radians.
-void Control_SetAngleRad(float target_yaw_rad);
 // Set an absolute target yaw in degrees.
 void Control_SetAngleDeg(float target_yaw_deg);
-// Set a relative turn in radians from current yaw.
-void Control_SetAngleRelativeRad(float delta_yaw_rad);
-// Set a relative turn in degrees from current yaw.
-void Control_SetAngleRelativeDeg(float delta_yaw_deg);
 
 // Update PID gains for the angle loop.
 void Control_SetAnglePid(float kp, float ki, float kd);
-// Set the maximum yaw rate output.
-void Control_SetAngleOutputLimit(float max_omega_rad_s);
-// Set the arrival thresholds（阈值）.
-void Control_SetAngleArriveThreshold(float error_rad, float omega_rad_s);
+// Set the maximum yaw-rate output in deg/s.
+void Control_SetAngleOutputLimit(float max_omega_deg_s);
+// Set the yaw-error threshold in degrees and yaw-rate threshold in deg/s.
+void Control_SetAngleArriveThreshold(float error_deg, float omega_deg_s);
 
-// Run one angle-loop step. dt_s is in seconds.
-float Control_AngleUpdate(float dt_s);
-// Keep the angle target and send the result to chassis.
-void Control_AngleHoldMove(float vx, float vy, float dt_s);
+// Run one angle-loop step from the timer interrupt.
+void Control_AngleUpdate(void);
+// Set translation speed, hold the absolute yaw angle, and send the latest output.
+void Control_AngleHoldMove(float vx, float vy, float hold_yaw_deg);
 // Return nonzero when the target is reached.
 uint8_t Control_AngleIsArrived(void);
 // Stop the angle loop and the chassis.
 void Control_Stop(void);
-// Run a position-turn plus heading-hold translation test.
-void Control_test(void);
 
 #ifdef __cplusplus
 }

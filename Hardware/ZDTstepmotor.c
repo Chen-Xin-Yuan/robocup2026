@@ -31,87 +31,6 @@ void Step_ZDT_Init(StepMotorZDT_t *zdt_mot,  uint8_t id ,UART_HandleTypeDef *_US
 	zdt_mot->_have_pub_permission=_have_pub_permission;
 }
 
-//第一部分：装填命令
-// /**
-//  * @brief    位置模式
-//  * @param    addr：电机地址
-//  * @param    dir ：方向        ，0为CW，其余值为CCW
-//  * @param    vel ：速度(RPM)   ，范围0 - 5000RPM
-//  * @param    acc ：加速度      ，范围0 - 255，注意：0是直接启动
-//  * @param    clk ：脉冲数      ，范围0- (2^32 - 1)个
-//  * @param    raF ：相位/绝对标志，false为相对运动，true为绝对值运动
-//  * @param    snF ：多机同步标志 ，false为不启用，true为启用
-//  * @retval   地址 + 功能码 + 命令状态 + 校验字节
-//  */
-// static uint8_t Step_Pos_Control(uint8_t *cmd, uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, 
-//     uint32_t clk, bool raF, bool snF)
-// {
-//     // uint8_t cmd[16] = {0};
-
-//     // 装载命令
-//     cmd[0] = addr;                 // 地址
-//     cmd[1] = 0xFD;                 // 功能码
-//     cmd[2] = dir;                  // 方向
-//     cmd[3] = (uint8_t)(vel >> 8);  // 速度(RPM)高8位字节
-//     cmd[4] = (uint8_t)(vel >> 0);  // 速度(RPM)低8位字节
-//     cmd[5] = acc;                  // 加速度，注意：0是直接启动
-//     cmd[6] = (uint8_t)(clk >> 24); // 脉冲数(bit24 - bit31)
-//     cmd[7] = (uint8_t)(clk >> 16); // 脉冲数(bit16 - bit23)
-//     cmd[8] = (uint8_t)(clk >> 8);  // 脉冲数(bit8  - bit15)
-//     cmd[9] = (uint8_t)(clk >> 0);  // 脉冲数(bit0  - bit7 )
-//     cmd[10] = raF;                 // 相位/绝对标志，false为相对运动，true为绝对值运动
-//     cmd[11] = snF;                 // 多机同步运动标志，false为不启用，true为启用
-//     cmd[12] = 0x6B;                // 校验字节
-
-//     // 返回命令长度
-//     return (uint8_t)13;
-// }
-
-// /**
-//  * @brief    速度模式
-//  * @param    addr：电机地址
-//  * @param    dir ：方向       ，0为CW，其余值为CCW
-//  * @param    vel ：速度       ，范围0 - 5000RPM
-//  * @param    acc ：加速度     ，范围0 - 255，注意：0是直接启动
-//  * @param    snF ：多机同步标志，false为不启用，true为启用
-//  * @retval   地址 + 功能码 + 命令状态 + 校验字节
-//  */
-// static uint8_t Step_Vel_Control(uint8_t *cmd, uint8_t addr, uint8_t dir, uint16_t vel, uint8_t acc, bool snF)
-// {
-//     // uint8_t cmd[16] = {0};
-
-//     // 装载命令
-//     cmd[0] = addr;                // 地址
-//     cmd[1] = 0xF6;                // 功能码
-//     cmd[2] = dir;                 // 方向
-//     cmd[3] = (uint8_t)(vel >> 8); // 速度(RPM)高8位字节
-//     cmd[4] = (uint8_t)(vel >> 0); // 速度(RPM)低8位字节
-//     cmd[5] = acc;                 // 加速度，注意：0是直接启动
-//     cmd[6] = snF;                 // 多机同步运动标志
-//     cmd[7] = 0x6B;                // 校验字节
-
-//     // 发送命令
-//     return (uint8_t)8;
-// }
-
-/**
- * @brief    多机同步运动
- * @param    addr  ：电机地址
- * @retval   地址 + 功能码 + 命令状态 + 校验字节
- */
-static uint8_t Step_Synchronous_motion(uint8_t *cmd, uint8_t addr)
-{
-    // uint8_t cmd[16] = {0};
-
-    // 装载命令
-    cmd[0] = addr; // 地址
-    cmd[1] = 0xFF; // 功能码
-    cmd[2] = 0x66; // 辅助码
-    cmd[3] = 0x6B; // 校验字节
-    return (4);
-}
-
-
 /**
  * @brief 发送读取编码器命令 (Emm_V5 功能码 0x30)
  * @param zdt_motor 电机结构体指针
@@ -179,8 +98,7 @@ void set_speed_target(StepMotorZDT_t *zdt_motor, float target)
     //发布权限
     if (zdt_motor->_have_pub_permission)
     {
-        uint8_t len = Step_Synchronous_motion(zdt_motor->_cmd_buffer, 0);                // 装载命令
-        Emm_V5_Transmit_Frame(zdt_motor->_USART, zdt_motor->_cmd_buffer, len);
+        Emm_V5_Synchronous_motion(0U);
         // 发送同步信号，触发运动
     }
 }
@@ -234,8 +152,7 @@ void set_speed_pos_target(StepMotorZDT_t *zdt_motor, float target_speed, float t
     // 如果有发布权限，发送同步信号
     if (zdt_motor->_have_pub_permission)
     {
-        uint8_t len = Step_Synchronous_motion(zdt_motor->_cmd_buffer, 0);
-        Emm_V5_Transmit_Frame(zdt_motor->_USART, zdt_motor->_cmd_buffer, len);
+        Emm_V5_Synchronous_motion(0U);
     }
     
     // 更新控制器设置//*标记*

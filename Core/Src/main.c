@@ -38,6 +38,7 @@
 #include "all_init.h"
 #include "ZDTstepmotor.h"
 #include "control.h"
+#include "gray.h"
 #include <stdio.h>
 #include <stdarg.h>
 
@@ -64,11 +65,13 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-    uint8_t status;
-//	uint8_t a;
-//	uint8_t b;
-float vel;
 float Motor_Vel;
+
+float world_yaw = 0;
+float body_vx = 0;
+float body_vy = 0;
+//�?般vx,vy有一个为0，防止轮胎打�?
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -96,7 +99,7 @@ void uart_printf(const char *format, ...)
 
     /* This function runs from TIM2 IRQ: never wait for another IRQ here. */
     if ((format == NULL) || (huart2.gState != HAL_UART_STATE_READY)){
-        return;    //如果格式为空或者串口状态不为就绪状态，直接返回
+        return;    //如果格式为空或�?�串口状态不为就绪状态，直接返回
     }
 
     va_start(args, format);
@@ -145,28 +148,32 @@ int main(void)
   MX_GPIO_Init();
   MX_DMA_Init();
   MX_USART1_UART_Init();
+  MX_I2C1_Init();
   MX_I2C2_Init();
   MX_TIM2_Init();
   MX_TIM9_Init();
   MX_USART6_UART_Init();
   MX_USART2_UART_Init();
+  MX_UART5_Init();
+  MX_USART3_UART_Init();
   /* USER CODE BEGIN 2 */
 
-  // HAL_TIM_PWM_Start(&htim9,TIM_CHANNEL_1);
-  // HAL_TIM_PWM_Start(&htim9,TIM_CHANNEL_2);
   icm_init();  
-  HAL_TIM_Base_Start_IT(&htim2);
 
 	// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
 
 	// HAL_Delay(2000);
 	// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
 
-	Chassis_Init(&huart1);
+  Chassis_Init(&huart1);
+  Gray_Init();
+  Servo_Init();
 
-	Chassis_Test();
+  // printf("System start\r\n");
+  HAL_TIM_Base_Start_IT(&htim2);
 
-	// Servo_test();
+  // ServoBus_Test();
+	// Chassis_Test();
 
   // Control_test();
   /* USER CODE END 2 */
@@ -176,6 +183,7 @@ int main(void)
   while (1)
   {
     /* Motor TX queue service runs from the TIM2 callback. */
+    // Gray_Process();
 
     /* USER CODE END WHILE */
 
@@ -238,9 +246,11 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
 		static uint16_t count1=0;
 		static uint16_t count2=0;
+		static uint16_t count3=0;
 
 		count1++;
 		count2++;
+		count3++;
 
 
 		if(count1>=5)
@@ -250,26 +260,33 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       // ICM_getValues();
       ICM_getEulerianAngles();
 
-
-			count1=0;
+			count1 = 0;
 		}		
-    if(count2>=1000)
+
+    if(count2 >= CONTROL_TEST_LOOP_DELAY_MS)
     {
-      printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
-        eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
+      //更新角度环
+      // Control_AngleUpdate();
+      // Control_AngleHoldMove(body_vx, body_vy, world_yaw);
+      //也要不断地发送角度环输出给底盘，否则底盘不会转动
 
-		// HAL_GPIO_TogglePin(DEBUG_LED_PORT, DEBUG_LED_PIN);
-  	  // if(ICM42688_ReadAccel(&hi2c2, icm_accel) == HAL_OK)
-		  // {
-			//    printf("AX=%6d, AY=%6d, AZ=%6d\r\n", icm_accel[0], icm_accel[1], icm_accel[2]);      
-		  // }
+      count2 = 0;
+    }
+    if(count3 >= 40)
+    {
+      // gray_show_digital();
+      // uart_printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
+      //   eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
+      if (Grey_PID_Update() == 0U)
+      {
+          Chassis_TrackDifferential(0.2f, Grey_Get_Output());
+      } 
+      else 
+      {
+          Chassis_stop();
+      }
 
-		  // if(ICM42688_ReadGyro(&hi2c2, icm_gyro) == HAL_OK)
-		  // {
-			//   printf("GX=%6d, GY=%6d, GZ=%6d\r\n", icm_gyro[0], icm_gyro[1], icm_gyro[2]);
-		  // }
-//		printf("%.2f\r\n",Motor_Vel);
-		count2=0;
+		count3 = 0;
     }
 	}
 }
