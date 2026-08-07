@@ -65,12 +65,15 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-float Motor_Vel;
+uint8_t overall_task_state = 0;
+
+uint16_t task1_state = 0;
+uint16_t task2_state = 0;
 
 float world_yaw = 0;
 float body_vx = 0;
 float body_vy = 0;
-//�?般vx,vy有一个为0，防止轮胎打�?
+
 
 /* USER CODE END PV */
 
@@ -99,7 +102,7 @@ void uart_printf(const char *format, ...)
 
     /* This function runs from TIM2 IRQ: never wait for another IRQ here. */
     if ((format == NULL) || (huart2.gState != HAL_UART_STATE_READY)){
-        return;    //如果格式为空或�?�串口状态不为就绪状态，直接返回
+        return;    
     }
 
     va_start(args, format);
@@ -182,12 +185,66 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-    /* Motor TX queue service runs from the TIM2 callback. */
-    // Gray_Process();
+
+  
 
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+
+    switch (overall_task_state){
+      case 0://二维码识别阶段
+
+
+
+        break;
+
+      case 1://任务1阶段
+        switch (task1_state)
+        {
+          case 11://循迹捡物块阶段
+            
+            break;
+          
+          case 12://捡完物块去找点
+
+            break;
+
+          default:
+            break;
+        }
+
+
+        break;
+
+      case 2://任务2阶段
+        switch (task2_state)
+        {
+        case 21 :
+          /* code */
+          break;
+        case 22 :
+        
+          break;
+
+        default:
+
+          break;
+        }
+        
+        break;
+
+      case 3://返程阶段
+
+        break;
+
+      default:
+
+        break;
+
+    }
+
+
   }
   /* USER CODE END 3 */
 }
@@ -243,6 +300,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 	if(htim->Instance==htim2.Instance)
 	{
     Chassis_Process();
+    Servo_Process();
 
 		static uint16_t count1=0;
 		static uint16_t count2=0;
@@ -265,10 +323,9 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
     if(count2 >= CONTROL_TEST_LOOP_DELAY_MS)
     {
-      //更新角度环
+     
       // Control_AngleUpdate();
       // Control_AngleHoldMove(body_vx, body_vy, world_yaw);
-      //也要不断地发送角度环输出给底盘，否则底盘不会转动
 
       count2 = 0;
     }
@@ -277,7 +334,24 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       // gray_show_digital();
       // uart_printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
       //   eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
-      if (Grey_PID_Update() == 0U)
+     
+      static uint16_t servo_count = 0U;
+      static uint8_t servo_index = 0;
+      static bool IS_zhuan = true;
+
+      servo_count++;
+      if (servo_count>=62 && IS_zhuan)
+      {
+        servo_count = 0U;               
+        servo_index ++;
+        if (servo_index == 5)
+        {
+          IS_zhuan = false;       
+        }
+        ServoBus_SetAngle(Servo_angle[servo_index]);
+      }
+
+      if (Grey_PID_Update() == 0U && IS_zhuan)
       {
           Chassis_TrackDifferential(0.2f, Grey_Get_Output());
       } 
@@ -294,12 +368,14 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   Emm_V5_TxCpltCallback(huart);
+  Servo_TxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 {
   /* TX DMA errors release the queued frame; USART1 has no RX path. */
   Emm_V5_UartErrorCallback(huart);
+  Servo_UartErrorCallback(huart);
 }
 
 /* USER CODE END 4 */

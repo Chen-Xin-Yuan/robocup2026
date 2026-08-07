@@ -63,6 +63,7 @@ extern DMA_HandleTypeDef hdma_usart1_rx;
 extern DMA_HandleTypeDef hdma_usart1_tx;
 extern DMA_HandleTypeDef hdma_usart3_tx;
 extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart3;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -240,7 +241,7 @@ void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
 
-	// if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLE����⵽�������?
+	// if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLE����⵽�������?
 	// {
 	// 	__HAL_UART_CLEAR_IDLEFLAG(&huart1); // ���IDLE��־
 
@@ -248,7 +249,7 @@ void USART1_IRQHandler(void)
 	// 	HAL_UART_AbortReceive(&huart1); /* RX DMA only; keep TX DMA running */
 
 	// 	if (rxCount > 0U) {
-	// 		ZDT_ProcessRxData((const uint8_t *)rxCmd, rxCount);// ������յ����ٶ�����?
+	// 		ZDT_ProcessRxData((const uint8_t *)rxCmd, rxCount);// ������յ����ٶ�����??
 	// 	}
 		 
 	// 	rxFrameFlag = true; // ��λһ֡���������ϱ�־λ
@@ -261,6 +262,20 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
+}
+
+/**
+  * @brief This function handles USART3 global interrupt.
+  */
+void USART3_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART3_IRQn 0 */
+
+  /* USER CODE END USART3_IRQn 0 */
+  HAL_UART_IRQHandler(&huart3);
+  /* USER CODE BEGIN USART3_IRQn 1 */
+
+  /* USER CODE END USART3_IRQn 1 */
 }
 
 /**

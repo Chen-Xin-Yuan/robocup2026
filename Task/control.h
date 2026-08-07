@@ -4,6 +4,9 @@
 #include "main.h"
 #include "pid.h"
 
+// 测试函数：依次验证静态角度环和动态角度环（阻塞式）
+void Control_test(void);
+
 #ifdef __cplusplus
 extern "C" {
 #endif
@@ -14,7 +17,7 @@ extern "C" {
 
 #define CONTROL_TEST_LOOP_DELAY_MS       20U
 
-// Angle-loop runtime state.
+// 动态角度环参数（行驶中航向保持）
 typedef struct
 {
     float target_yaw_deg;//目标yaw角度
@@ -35,37 +38,43 @@ typedef struct
     uint8_t coarse_turn_stop_sent;//粗调前是否已经发送停止命令
     uint32_t coarse_turn_ready_tick;//允许发送粗调位置命令的时间戳
     uint32_t coarse_turn_end_tick;//粗调结束时间戳
-} Control_t;
+} Control_DynamicAngle_t;
 
-extern Control_t Control;
+extern Control_DynamicAngle_t Control_DynamicAngle;
 
-/*================== 需要调用的闭环控制函数 ==================*/
+/*================== 动态角度环（行驶中航向保持） ==================*/
 
-// Initialize the angle loop and tuned PID values.
+// 初始化动态角度环（PID参数在 Control_Init 内修改）
 void Control_Init(void);
-// Reset control state but keep PID gains.
-void Control_Reset(void);
-// Enable or disable the angle loop.
-void Control_Enable(uint8_t enable);
-
-// Set an absolute target yaw in degrees.
-void Control_SetAngleDeg(float target_yaw_deg);
-
-// Update PID gains for the angle loop.
-void Control_SetAnglePid(float kp, float ki, float kd);
-// Set the maximum yaw-rate output in deg/s.
-void Control_SetAngleOutputLimit(float max_omega_deg_s);
-// Set the yaw-error threshold in degrees and yaw-rate threshold in deg/s.
-void Control_SetAngleArriveThreshold(float error_deg, float omega_deg_s);
-
-// Run one angle-loop step from the timer interrupt.
+// 周期调用角度环 PID 更新（建议 10~20 ms 一次）
 void Control_AngleUpdate(void);
-// Set translation speed, hold the absolute yaw angle, and send the latest output.
+// 设置平移速度并保持绝对航向，发送最新输出（接口函数）
 void Control_AngleHoldMove(float vx, float vy, float hold_yaw_deg);
-// Return nonzero when the target is reached.
-uint8_t Control_AngleIsArrived(void);
-// Stop the angle loop and the chassis.
-void Control_Stop(void);
+
+/*================== 静态角度环（原地转向 yaw 速度环） ==================*/
+
+typedef struct
+{
+    PID_t pid;
+    float target_yaw_deg;
+    float feedback_yaw_deg;
+    float error_yaw_deg;
+    float omega_cmd_deg_s;
+    float max_omega_deg_s;
+    float tolerance_deg;
+    uint32_t last_tick_ms;
+    uint8_t enabled;
+    uint8_t arrived;
+} Control_StaticAngle_t;
+
+extern Control_StaticAngle_t Control_StaticAngle;
+
+// 初始化静态角度环（PID参数在 Control_YawInit 内修改）
+void Control_YawInit(void);
+// 设置目标角度并开始闭环旋转（接口函数）
+void Control_YawStart(float target_yaw_deg);
+// 周期调用角度环 PID 更新（建议 10~20 ms 一次）
+void Control_YawUpdate(void);
 
 #ifdef __cplusplus
 }

@@ -11,21 +11,73 @@
 #define SERVO_BUS_ANGLE_MAX_DEG       360U
 #define SERVO_BUS_MOVE_TIME_MS       1000U
 #define SERVO_INIT_DELAY_MS           500U
-#define SERVO_TX_TIMEOUT_MS           100U
+#define SERVO_POWER_ON_DELAY_MS      300U
 #define SERVO_COMMAND_MAX_LEN          24U
-
+#define SERVO_TX_QUEUE_DEPTH           4U
 
 #define SERVO_BUS_1          67U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
 #define SERVO_BUS_5          SERVO_BUS_4+72
+#define SERVO_BUS_LOCK       SERVO_BUS_4+36
 
+uint16_t Servo_angle[6]={SERVO_BUS_1,SERVO_BUS_2,SERVO_BUS_3,SERVO_BUS_4,SERVO_BUS_5,SERVO_BUS_LOCK};
 
+/* ---------------- DMA 发送队列（非阻塞，可在中断中调用） ---------------- */
 
+typedef struct
+{
+    uint8_t length;
+    char data[SERVO_COMMAND_MAX_LEN];
+} Servo_TxFrame_t;
+
+static Servo_TxFrame_t s_servo_tx_queue[SERVO_TX_QUEUE_DEPTH];
+static volatile uint8_t s_servo_tx_head = 0U;
+static volatile uint8_t s_servo_tx_tail = 0U;
+static volatile uint8_t s_servo_tx_count = 0U;
+static volatile uint8_t s_servo_tx_active = 0U;
+
+static uint32_t Servo_EnterCritical(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    return primask;
+}
+
+static void Servo_ExitCritical(uint32_t primask)
+{
+    if (primask == 0U) {
+        __enable_irq();
+    }
+}
+
+/* 队列非空且 DMA 空闲时启动下一帧。非阻塞，可在中断中调用。 */
+static void Servo_TryStartTx(void)
+{
+    uint32_t primask;
+
+    primask = Servo_EnterCritical();
+    if (s_servo_tx_active || (s_servo_tx_count == 0U)) {
+        Servo_ExitCritical(primask);
+        return;
+    }
+    s_servo_tx_active = 1U;
+    Servo_ExitCritical(primask);
+
+    if (HAL_UART_Transmit_DMA(&huart3,
+                              (uint8_t *)s_servo_tx_queue[s_servo_tx_head].data,
+                              s_servo_tx_queue[s_servo_tx_head].length) != HAL_OK) {
+        /* 启动失败：释放占用标记，交给 Servo_Process 重试。 */
+        s_servo_tx_active = 0U;
+    }
+}
+
+/* 入队一帧指令。非阻塞，可在中断中调用；队列满时返回 HAL_BUSY 并丢弃本帧。 */
 static HAL_StatusTypeDef Servo_SendString(const char *command)
 {
     size_t length;
+    uint32_t primask;
 
     if (command == NULL) {
         return HAL_ERROR;
@@ -36,10 +88,74 @@ static HAL_StatusTypeDef Servo_SendString(const char *command)
         return HAL_ERROR;
     }
 
-    return HAL_UART_Transmit(&huart3,
-                             (uint8_t *)command,
-                             (uint16_t)length,
-                             SERVO_TX_TIMEOUT_MS);
+    primask = Servo_EnterCritical();
+
+    if (s_servo_tx_count >= SERVO_TX_QUEUE_DEPTH) {
+        Servo_ExitCritical(primask);
+        return HAL_BUSY;
+    }
+
+    memcpy(s_servo_tx_queue[s_servo_tx_tail].data, command, length + 1U);
+    s_servo_tx_queue[s_servo_tx_tail].length = (uint8_t)length;
+    s_servo_tx_tail = (uint8_t)((s_servo_tx_tail + 1U) % SERVO_TX_QUEUE_DEPTH);
+    s_servo_tx_count++;
+
+    Servo_ExitCritical(primask);
+
+    Servo_TryStartTx();
+    return HAL_OK;
+}
+
+/* 由 main.c 的 HAL_UART_TxCpltCallback 转调：上一帧发送完成，启动下一帧。 */
+void Servo_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    uint32_t primask;
+
+    if (huart != &huart3) {
+        return;
+    }
+
+    primask = Servo_EnterCritical();
+
+    if (s_servo_tx_active && (s_servo_tx_count > 0U)) {
+        s_servo_tx_active = 0U;
+        s_servo_tx_head = (uint8_t)((s_servo_tx_head + 1U) % SERVO_TX_QUEUE_DEPTH);
+        s_servo_tx_count--;
+    }
+
+    Servo_ExitCritical(primask);
+
+    Servo_TryStartTx();
+}
+
+/* 由 main.c 的 HAL_UART_ErrorCallback 转调：TX DMA 出错时清空整个队列。 */
+void Servo_UartErrorCallback(UART_HandleTypeDef *huart)
+{
+    uint32_t primask;
+
+    if (huart != &huart3) {
+        return;
+    }
+
+    primask = Servo_EnterCritical();
+
+    if (s_servo_tx_active && (s_servo_tx_count > 0U) &&
+        ((huart->ErrorCode & HAL_UART_ERROR_DMA) != 0U) &&
+        (huart->gState == HAL_UART_STATE_READY)) {
+        s_servo_tx_active = 0U;
+        s_servo_tx_head = s_servo_tx_tail;
+        s_servo_tx_count = 0U;
+    }
+
+    Servo_ExitCritical(primask);
+}
+
+/* 周期调用（如 TIM2 中断里）：DMA 启动失败时重试队列。 */
+void Servo_Process(void)
+{
+    if (!s_servo_tx_active && (s_servo_tx_count > 0U)) {
+        Servo_TryStartTx();
+    }
 }
 
 static HAL_StatusTypeDef Servo_SetPosition(uint16_t position)
@@ -96,6 +212,9 @@ void Servo_Init(void)
 {
     Servo_SetAngle(90U);
     (void)HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
+
+    /* 等待舵机上电稳定后再发第一条指令，否则 ID 设置可能被忽略。 */
+    HAL_Delay(SERVO_POWER_ON_DELAY_MS);
 
     /* Single-servo setup: force the connected servo to protocol ID 000. */
     if (Servo_SendString("#255PID000!") == HAL_OK) {

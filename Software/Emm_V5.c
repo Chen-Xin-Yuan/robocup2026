@@ -9,9 +9,9 @@
  */
 #define EMM_V5_TX_QUEUE_DEPTH     16U
 #define EMM_V5_TX_MAX_FRAME_SIZE  (MMCL_LEN + 5U)
-#define EMM_V5_TX_RETRY_PERIOD_MS 1U
-#define EMM_V5_TX_INTER_FRAME_MS   2U
-#define EMM_V5_TX_SYNC_DELAY_MS    1U
+#define EMM_V5_TX_RETRY_PERIOD_MS 3U
+#define EMM_V5_TX_INTER_FRAME_MS   3U
+#define EMM_V5_TX_SYNC_DELAY_MS    3U
 //发送同步帧和之前的帧之间的最小间隔，避免驱动器处理阶段和下一条命令挤在一起
 
 typedef struct
