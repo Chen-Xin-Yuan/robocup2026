@@ -1,4 +1,4 @@
-#include "Servo_motor.h"
+﻿#include "Servo_motor.h"
 #include "tim.h"
 #include "usart.h"
 #include <stdio.h>
@@ -6,7 +6,7 @@
 
 #define SERVO_POSITION_MIN            500U
 #define SERVO_POSITION_MAX           2500U
-#define SERVO_PWM_ANGLE_MAX_DEG        90U
+#define SERVO_PWM_ANGLE_MAX_DEG        98U
 #define SERVO_PWM_FULL_RANGE_DEG      180U
 #define SERVO_BUS_ANGLE_MAX_DEG       360U
 #define SERVO_BUS_MOVE_TIME_MS       1000U
@@ -210,7 +210,7 @@ void ServoBus_SetAngle(uint16_t angle_deg)
 
 void Servo_Init(void)
 {
-    Servo_SetAngle(90U);
+    Servo_SetAngle(0U);
     (void)HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
 
     /* 等待舵机上电稳定后再发第一条指令，否则 ID 设置可能被忽略。 */

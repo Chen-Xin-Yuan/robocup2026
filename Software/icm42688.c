@@ -1,4 +1,4 @@
-#include "icm42688.h"
+ï»¿#include "icm42688.h"
 #include "main.h"
 #include "kalman.h"
 #include "i2c.h"
@@ -8,48 +8,48 @@
 // int16_t gyro_offset[3];
 
 
-// ³õÊ¼»¯Ê±µ÷ÓÃÒ»´Î£¬Ä£¿é±ØĞë¾²Ö¹£¡
+// åˆå§‹åŒ–æ—¶è°ƒç”¨ä¸€æ¬¡ï¼Œæ¨¡å—å¿…é¡»é™æ­¢ï¼
 
 /**
-  * @brief  ICM42688³õÊ¼»¯
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @retval ³õÊ¼»¯×´Ì¬ (0:³É¹¦, ÆäËû:´íÎó´úÂë)
+  * @brief  ICM42688åˆå§‹åŒ–
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @retval åˆå§‹åŒ–çŠ¶æ€ (0:æˆåŠŸ, å…¶ä»–:é”™è¯¯ä»£ç )
   */
 uint8_t ICM42688_Init(I2C_HandleTypeDef *hi2c)
 {
-    // 1. ÖØÖÃÉè±¸
+    // 1. é‡ç½®è®¾å¤‡
 	ICM42688_WriteReg(hi2c, REG_BANK_SEL, 0x00);
     HAL_Delay(1);
     ICM42688_Reset(hi2c);
-    HAL_Delay(20); // µÈ´ı20msÈ·±£ÖØÖÃÍê³É
+    HAL_Delay(20); // ç­‰å¾…20msç¡®ä¿é‡ç½®å®Œæˆ
 
-    // 2. ÑéÖ¤Éè±¸ID
+    // 2. éªŒè¯è®¾å¤‡ID
     if(ICM42688_WhoAmI(hi2c) != 0x47)
     {
-        return ICM42688_ERR_INIT; // Éè±¸ID²»Æ¥Åä
+        return ICM42688_ERR_INIT; // è®¾å¤‡IDä¸åŒ¹é…
     }
 
-    // 3. ÅäÖÃµçÔ´¹ÜÀí
-    // ÍÓÂİÒÇºÍ¼ÓËÙ¶È¼Æ¶¼½øÈëµÍÔëÉùÄ£Ê½
+    // 3. é…ç½®ç”µæºç®¡ç†
+    // é™€èºä»ªå’ŒåŠ é€Ÿåº¦è®¡éƒ½è¿›å…¥ä½å™ªå£°æ¨¡å¼
     if(ICM42688_WriteReg(hi2c, PWR_MGMT0, 0x0F) != HAL_OK)
     {
         return ICM42688_ERR_COMM;
     }
-    HAL_Delay(50); // µÈ´ı50ms
+    HAL_Delay(50); // ç­‰å¾…50ms
 
-    // 4. ÅäÖÃÍÓÂİÒÇ ¡À2000dps, ODR=1kHz
+    // 4. é…ç½®é™€èºä»ª Â±2000dps, ODR=1kHz
     if(ICM42688_WriteReg(hi2c, GYRO_CONFIG0, 0x06) != HAL_OK)
     {
         return ICM42688_ERR_COMM;
     }
 
-    // 5. ÅäÖÃ¼ÓËÙ¶È¼Æ ¡À16g, ODR=1kHz
+    // 5. é…ç½®åŠ é€Ÿåº¦è®¡ Â±16g, ODR=1kHz
     if(ICM42688_WriteReg(hi2c, ACCEL_CONFIG0, 0x06) != HAL_OK)
     {
         return ICM42688_ERR_COMM;
     }
 
-    // 6. ÅäÖÃÖĞ¶Ï (ÍÆÍìÊä³ö£¬¸ßµçÆ½ÓĞĞ§)
+    // 6. é…ç½®ä¸­æ–­ (æ¨æŒ½è¾“å‡ºï¼Œé«˜ç”µå¹³æœ‰æ•ˆ)
     if(ICM42688_WriteReg(hi2c, INT_CONFIG, 0x08) != HAL_OK)
     {
         return ICM42688_ERR_COMM;
@@ -61,9 +61,9 @@ uint8_t ICM42688_Init(I2C_HandleTypeDef *hi2c)
 }
 
 /**
-  * @brief  ¶ÁÈ¡Éè±¸ID
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @retval Éè±¸ID (Õı³£Ó¦Îª0x47)
+  * @brief  è¯»å–è®¾å¤‡ID
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @retval è®¾å¤‡ID (æ­£å¸¸åº”ä¸º0x47)
   */
 uint8_t ICM42688_WhoAmI(I2C_HandleTypeDef *hi2c)
 {
@@ -73,20 +73,20 @@ uint8_t ICM42688_WhoAmI(I2C_HandleTypeDef *hi2c)
 }
 
 /**
-  * @brief  ÖØÖÃÉè±¸
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
+  * @brief  é‡ç½®è®¾å¤‡
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
   */
 void ICM42688_Reset(I2C_HandleTypeDef *hi2c)
 {
-    ICM42688_WriteReg(hi2c, DEVICE_CONFIG, 0x01); // Èí¼şÖØÖÃ
+    ICM42688_WriteReg(hi2c, DEVICE_CONFIG, 0x01); // è½¯ä»¶é‡ç½®
 }
 
 /**
-  * @brief  Ğ´Èë¼Ä´æÆ÷
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @param  reg: ¼Ä´æÆ÷µØÖ·
-  * @param  value: ÒªĞ´ÈëµÄÖµ
-  * @retval HAL×´Ì¬
+  * @brief  å†™å…¥å¯„å­˜å™¨
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @param  reg: å¯„å­˜å™¨åœ°å€
+  * @param  value: è¦å†™å…¥çš„å€¼
+  * @retval HALçŠ¶æ€
   */
 HAL_StatusTypeDef ICM42688_WriteReg(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t value)
 {
@@ -95,31 +95,31 @@ HAL_StatusTypeDef ICM42688_WriteReg(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_
 }
 
 /**
-  * @brief  ¶ÁÈ¡¼Ä´æÆ÷
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @param  reg: ¼Ä´æÆ÷µØÖ·
-  * @param  data: ´æ´¢Êı¾İµÄ»º³åÇø
-  * @param  len: Òª¶ÁÈ¡µÄ³¤¶È
-  * @retval HAL×´Ì¬
+  * @brief  è¯»å–å¯„å­˜å™¨
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @param  reg: å¯„å­˜å™¨åœ°å€
+  * @param  data: å­˜å‚¨æ•°æ®çš„ç¼“å†²åŒº
+  * @param  len: è¦è¯»å–çš„é•¿åº¦
+  * @retval HALçŠ¶æ€
   */
 HAL_StatusTypeDef ICM42688_ReadReg(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t *data, uint16_t len)
 {
-    // ÏÈ·¢ËÍ¼Ä´æÆ÷µØÖ·
+    // å…ˆå‘é€å¯„å­˜å™¨åœ°å€
     HAL_StatusTypeDef status = HAL_I2C_Master_Transmit(hi2c, ICM42688_ADDRESS << 1, &reg, 1, 100);
     if(status != HAL_OK)
     {
         return status;
     }
 
-    // È»ºó¶ÁÈ¡Êı¾İ
+    // ç„¶åè¯»å–æ•°æ®
     return HAL_I2C_Master_Receive(hi2c, ICM42688_ADDRESS << 1, data, len, 100);
 }
 
 /**
-  * @brief  ¶ÁÈ¡¼ÓËÙ¶È¼ÆÊı¾İ (Ô­Ê¼Öµ)
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @param  accel: ´æ´¢Êı¾İµÄÊı×é(x,y,z)
-  * @retval HAL×´Ì¬
+  * @brief  è¯»å–åŠ é€Ÿåº¦è®¡æ•°æ® (åŸå§‹å€¼)
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @param  accel: å­˜å‚¨æ•°æ®çš„æ•°ç»„(x,y,z)
+  * @retval HALçŠ¶æ€
   */
 HAL_StatusTypeDef ICM42688_ReadAccel(I2C_HandleTypeDef *hi2c, icm_param_t *icm_data)
 {
@@ -132,18 +132,18 @@ HAL_StatusTypeDef ICM42688_ReadAccel(I2C_HandleTypeDef *hi2c, icm_param_t *icm_d
         return status;
     }
 
-    icm_data->acc_x = (int16_t)((data[0] << 8) | data[1]); // XÖá
-    icm_data->acc_y = (int16_t)((data[2] << 8) | data[3]); // YÖá
-    icm_data->acc_z = (int16_t)((data[4] << 8) | data[5]); // ZÖá
+    icm_data->acc_x = (int16_t)((data[0] << 8) | data[1]); // Xè½´
+    icm_data->acc_y = (int16_t)((data[2] << 8) | data[3]); // Yè½´
+    icm_data->acc_z = (int16_t)((data[4] << 8) | data[5]); // Zè½´
 
     return HAL_OK;
 }
 
 /**
-  * @brief  ¶ÁÈ¡ÍÓÂİÒÇÊı¾İ (Ô­Ê¼Öµ)
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @param  gyro: ´æ´¢Êı¾İµÄÊı×é(x,y,z)
-  * @retval HAL×´Ì¬
+  * @brief  è¯»å–é™€èºä»ªæ•°æ® (åŸå§‹å€¼)
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @param  gyro: å­˜å‚¨æ•°æ®çš„æ•°ç»„(x,y,z)
+  * @retval HALçŠ¶æ€
   */
 HAL_StatusTypeDef ICM42688_ReadGyro(I2C_HandleTypeDef *hi2c, icm_param_t *icm_data)
 {
@@ -156,17 +156,17 @@ HAL_StatusTypeDef ICM42688_ReadGyro(I2C_HandleTypeDef *hi2c, icm_param_t *icm_da
         return status;
     }
 
-    icm_data->gyro_x = (int16_t)((data[0] << 8) | data[1]); // XÖá
-    icm_data->gyro_y = (int16_t)((data[2] << 8) | data[3]); // YÖá
-    icm_data->gyro_z = (int16_t)((data[4] << 8) | data[5]); // ZÖá
+    icm_data->gyro_x = (int16_t)((data[0] << 8) | data[1]); // Xè½´
+    icm_data->gyro_y = (int16_t)((data[2] << 8) | data[3]); // Yè½´
+    icm_data->gyro_z = (int16_t)((data[4] << 8) | data[5]); // Zè½´
 
     return HAL_OK;
 }
 
 /**
-  * @brief  ¶ÁÈ¡ÎÂ¶ÈÊı¾İ (ÉãÊÏ¶È)
-  * @param  hi2c: I2C¾ä±úÖ¸Õë
-  * @retval ÎÂ¶ÈÖµ(¡æ)
+  * @brief  è¯»å–æ¸©åº¦æ•°æ® (æ‘„æ°åº¦)
+  * @param  hi2c: I2Cå¥æŸ„æŒ‡é’ˆ
+  * @retval æ¸©åº¦å€¼(â„ƒ)
   */
 float ICM42688_ReadTemperature(I2C_HandleTypeDef *hi2c)
 {
@@ -176,10 +176,10 @@ float ICM42688_ReadTemperature(I2C_HandleTypeDef *hi2c)
     if(ICM42688_ReadReg(hi2c, TEMP_DATA1, data, 2) == HAL_OK)
     {
         temp_raw = (int16_t)((data[0] << 8) | data[1]);
-        return (temp_raw / 132.48f) + 25.0f; // ¸ù¾İÊı¾İÊÖ²á¹«Ê½×ª»»
+        return (temp_raw / 132.48f) + 25.0f; // æ ¹æ®æ•°æ®æ‰‹å†Œå…¬å¼è½¬æ¢
     }
 
-    return -273.15f; // ¶ÁÈ¡Ê§°Ü·µ»Ø¾ø¶ÔÁã¶È
+    return -273.15f; // è¯»å–å¤±è´¥è¿”å›ç»å¯¹é›¶åº¦
 }
 
 

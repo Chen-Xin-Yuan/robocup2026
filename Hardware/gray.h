@@ -1,4 +1,4 @@
-#ifndef HARDWARE_GRAY_H
+ï»¿#ifndef HARDWARE_GRAY_H
 #define HARDWARE_GRAY_H
 
 #include <stdint.h>
@@ -10,19 +10,19 @@ extern "C" {
 #endif
 
 #define GRAY_SENSOR_NUM 8U
-
+#define GRAY_PID_PERIOD_MS       40U
 /*
- * »Ò¶ÈÑ­¼£×´Ì¬¡£PID µÄ²ÎÊı¼°»ı·Ö¡¢Î¢·ÖÀúÊ·Í³Ò»ÓÉ PID_t ¹ÜÀí£¬
- * ´Ë½á¹¹ÌåÖ»±£Áô´«¸ĞÆ÷Êı¾İºÍÑ­¼£²ã×´Ì¬¡£
+ * ç°åº¦å¾ªè¿¹çŠ¶æ€ã€‚PID çš„å‚æ•°åŠç§¯åˆ†ã€å¾®åˆ†å†å²ç»Ÿä¸€ç”± PID_t ç®¡ç†ï¼Œ
+ * æ­¤ç»“æ„ä½“åªä¿ç•™ä¼ æ„Ÿå™¨æ•°æ®å’Œå¾ªè¿¹å±‚çŠ¶æ€ã€‚
  */
 typedef struct
 {
     PID_t pid;
-    uint8_t sensor_binary[GRAY_SENSOR_NUM]; /* bit0~bit7£¬0=ºÚÏß£¬1=°×µ× */
+    uint8_t sensor_binary[GRAY_SENSOR_NUM]; /* bit0~bit7ï¼Œ0=é»‘çº¿ï¼Œ1=ç™½åº• */
     uint8_t sensor_digital;
     uint8_t sensor_analog[GRAY_SENSOR_NUM];
     uint8_t sensor_normalized[GRAY_SENSOR_NUM];
-    float line_position;                    /* ¸ºÖµÆ«×ó£¬ÕıÖµÆ«ÓÒ */
+    float line_position;                    /* è´Ÿå€¼åå·¦ï¼Œæ­£å€¼åå³ */
     float target_position;
     float pid_output;
     uint8_t track_lost;
@@ -32,18 +32,20 @@ typedef struct
 
 extern Track_System track_sys;
 
-/* Ê¹ÓÃÄ¬ÈÏ²ÎÊı³õÊ¼»¯Ñ­¼£ PID¡£ */
+/* ä½¿ç”¨é»˜è®¤å‚æ•°åˆå§‹åŒ–å¾ªè¿¹ PIDã€‚ */
+void gray_read_binary(void);
+
 void Gray_Init(void);
 
-/* ÖĞ¶Ï°²È«£ºÖ»Ìá½»Ò»´Î»Ò¶ÈÊı¾İ´òÓ¡ÇëÇó£¬²»Ö´ĞĞ I2C ²Ù×÷¡£ */
+/* ä¸­æ–­å®‰å…¨ï¼šåªæäº¤ä¸€æ¬¡ç°åº¦æ•°æ®æ‰“å°è¯·æ±‚ï¼Œä¸æ‰§è¡Œ I2C æ“ä½œã€‚ */
 void gray_show_digital(void);
 
-/* ÔÚÖ÷Ñ­»·ÖĞ·´¸´µ÷ÓÃ£¬Íê³É I2C ²ÉÑù¡¢¹éÒ»»¯µÈ´ıºÍ USART2 DMA Êä³ö¡£ */
+/* åœ¨ä¸»å¾ªç¯ä¸­åå¤è°ƒç”¨ï¼Œå®Œæˆ I2C é‡‡æ ·ã€å½’ä¸€åŒ–ç­‰å¾…å’Œ USART2 DMA è¾“å‡ºã€‚ */
 void Gray_Process(void);
 
 /*
- * ¶ÁÈ¡´«¸ĞÆ÷²¢¸üĞÂÒ»´Î PID£¬µ÷ÓÃÖÜÆÚÓ¦±£³ÖÎª 10 ms¡£
- * ·µ»Ø 0 ±íÊ¾Õı³£Ñ­¼££¬·µ»Ø 1 ±íÊ¾ÒÑ¾­Á¬Ğø¶ªÏß¡£
+ * è¯»å–ä¼ æ„Ÿå™¨å¹¶æ›´æ–°ä¸€æ¬¡ PIDï¼Œè°ƒç”¨å‘¨æœŸåº”ä¿æŒä¸º 10 msã€‚
+ * è¿”å› 0 è¡¨ç¤ºæ­£å¸¸å¾ªè¿¹ï¼Œè¿”å› 1 è¡¨ç¤ºå·²ç»è¿ç»­ä¸¢çº¿ã€‚
  */
 uint8_t Grey_PID_Update(void);
 

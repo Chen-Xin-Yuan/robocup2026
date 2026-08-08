@@ -189,7 +189,7 @@ float PID_Update(PID_t *pid, float setpoint, float feedback, float dt_s)
     return pid_update_core(pid, setpoint - feedback, dt_s);
 }
 
-float PID_UpdateError(PID_t *pid, float error, float dt_s)
+float PID_UpdateError(PID_t *pid, float error, uint16_t dt_ms)
 {
     if (pid == NULL) {
         return 0.0f;
@@ -197,5 +197,5 @@ float PID_UpdateError(PID_t *pid, float error, float dt_s)
 
     pid->setpoint = error;
     pid->feedback = 0.0f;
-    return pid_update_core(pid, error, dt_s);
+    return pid_update_core(pid, error, (float)dt_ms / 1000.0f);
 }

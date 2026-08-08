@@ -1,4 +1,4 @@
-#include "flash.h"
+﻿#include "flash.h"
 #include "navigation.h"
 
 //�����ؼ���ɣ�flash <--> buffer <--> varible  ���������뻺������������������flash

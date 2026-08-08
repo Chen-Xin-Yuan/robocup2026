@@ -54,6 +54,11 @@ void Error_Handler(void);
 
 /* USER CODE BEGIN EFP */
 
+/* ===== 共享全局变量（定义在 main.c 的 USER CODE PV，供其它文件读写） ===== */
+extern uint8_t overall_task_state;   /* 总任务状态机 */
+extern uint8_t task1_state;          /* 任务1阶段状态 */
+extern uint8_t task2_state;          /* 任务2阶段状态 */
+
 /* USER CODE END EFP */
 
 /* Private defines -----------------------------------------------------------*/

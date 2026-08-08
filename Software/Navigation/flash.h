@@ -1,11 +1,11 @@
-#ifndef __FLASH_H
+ï»¿#ifndef __FLASH_H
 #define __FLASH_H
 
 #include "stm32f4xx_hal.h"
 
-// ===================== F407 ¹Ù·½ÕıÈ·ÅäÖÃ =====================
-#define FLASH_USER_START_ADDR   0x080E0000    // ÉÈÇø11ÆğÊ¼µØÖ·
-#define FLASH_USER_SECTOR       FLASH_SECTOR_11 // ¹Ù·½ºê
+// ===================== F407 å®˜æ–¹æ­£ç¡®é…ç½® =====================
+#define FLASH_USER_START_ADDR   0x080E0000    // æ‰‡åŒº11èµ·å§‹åœ°å€
+#define FLASH_USER_SECTOR       FLASH_SECTOR_11 // å®˜æ–¹å®
 #define MAX_SIZE                100
 #define FLASH_BUFFER_SIZE       1024
 // ==============================================================

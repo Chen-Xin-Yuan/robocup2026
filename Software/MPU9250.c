@@ -1,4 +1,4 @@
-#include "MPU9250.h"
+Ôªø#include "MPU9250.h"
 
 static HAL_StatusTypeDef MPU_Write(I2C_HandleTypeDef *hi2c, uint8_t reg, uint8_t val)
 {
@@ -17,21 +17,21 @@ uint8_t MPU6500_Init(I2C_HandleTypeDef *hi2c)
 {
     uint8_t id;
 
-    // ∏¥Œª
+    // Â§ç‰Ωç
     MPU_Write(hi2c, PWR_MGMT_1, 0x80);
     HAL_Delay(20);
 
-    // ∂¡ID
+    // ËØªID
     MPU_Read(hi2c, WHO_AM_I_MPU6500, &id, 1);
     if(id != 0x70) return MPU6500_ERR_INIT;
 
-    // ªΩ–—
+    // Âî§ÈÜí
     MPU_Write(hi2c, PWR_MGMT_1, 0x00);
     HAL_Delay(10);
 
-    // ≈‰÷√¡ø≥Ã
-    MPU_Write(hi2c, GYRO_CONFIG, 0x18);   // °¿2000dps
-    MPU_Write(hi2c, ACCEL_CONFIG, 0x18);  // °¿16g
+    // ÈÖçÁΩÆÈáèÁ®ã
+    MPU_Write(hi2c, GYRO_CONFIG, 0x18);   // ¬±2000dps
+    MPU_Write(hi2c, ACCEL_CONFIG, 0x18);  // ¬±16g
 
     return MPU6500_OK;
 }

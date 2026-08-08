@@ -1,9 +1,10 @@
-#include "Chassis.h"
+﻿#include "Chassis.h"
 #include "main.h"
 #include "motor_def.h"
 #include "ZDTstepmotor.h"
 #include "Emm_V5.h"
 #include "usart.h"
+#include "gray.h"
 #include <math.h>
 #include <string.h>
 #include <stdarg.h>
@@ -340,4 +341,62 @@ void Chassis_Test(void)
     // HAL_Delay(Chassis_MovePos(0.1f, 0.0f, 0.0f));
     // HAL_Delay(Chassis_MovePos(0.0f, 0.0f, 90.0f));
 #endif
+}
+
+/*================== 状态机辅助函数 ==================*/
+
+/**
+ * @brief 开环运动一段时间后停止
+ * @note  数值按场地标定
+ */
+void Chassis_OpenLoopMove(float vx, float vy, float omega, uint32_t duration_ms)
+{
+    Chassis_Move(vx, vy, omega);
+    HAL_Delay(duration_ms);
+    Chassis_stop();
+}
+
+/**
+ * @brief 定位置移动（阻塞式）
+ * @retval 实际执行时间(ms)；失败返回 0
+ */
+uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg)
+{
+    float duration_ms;
+
+    do {
+        duration_ms = Chassis_MovePos(sx, sy, theta_deg);
+        if (duration_ms < 0.0f) {
+            // Chassis_Process();
+            HAL_Delay(1U);
+        }
+    } while (duration_ms < 0.0f);
+
+    if (duration_ms > 0.0f) {
+        HAL_Delay((uint32_t)(duration_ms + 0.5f));
+        return (uint32_t)(duration_ms + 0.5f);
+    }
+    return 0U;
+}
+
+/**
+ * @brief 向左横移，直到灰度中间两个传感器(3,4)同时检测到黑线
+ * @param speed      横移速度 (m/s)
+ * @param timeout_ms 超时(ms)
+ */
+void Chassis_StrafeLeftUntilLine(float speed, uint32_t timeout_ms)
+{
+    uint32_t start_tick = HAL_GetTick();
+
+    while ((int32_t)(HAL_GetTick() - start_tick) < (int32_t)timeout_ms)
+     {
+        (void)gray_read_binary();   /* 刷新灰度 sensor_binary */
+        if ((track_sys.sensor_binary[3] == 0U) ||
+            (track_sys.sensor_binary[4] == 0U)) {
+            break;   /* 中间两个都压到黑线 */
+        }
+        Chassis_Move(speed, 0.0f, 0.0f);   /* 向左 = -x */
+        HAL_Delay(5U);
+    }
+    Chassis_stop();
 }

@@ -1,4 +1,4 @@
-#include "gray.h"
+ï»¿#include "gray.h"
 
 #include <stdio.h>
 #include <string.h>
@@ -6,19 +6,12 @@
 #include "hardware_iic.h"
 #include "usart.h"
 
-#define GRAY_PID_PERIOD_S       0.010f
-#define GRAY_PID_KP             15.0f
-#define GRAY_PID_KI             0.0f
-#define GRAY_PID_KD             0.0f
-#define GRAY_OUTPUT_MIN        (-200.0f)
-#define GRAY_OUTPUT_MAX         200.0f
-#define GRAY_INTEGRAL_MIN      (-100.0f)
-#define GRAY_INTEGRAL_MAX       100.0f
+
 #define GRAY_LOST_COUNT_MAX     5U
 #define GRAY_NORMALIZE_WAIT_MS   10U
 #define GRAY_DEBUG_BUFFER_SIZE   192U
 
-/* bit0 ÔÚ×î×ó²à£¬bit7 ÔÚ×îÓÒ²à£»°²×°·½ÏòÏà·´Ê±¿Éµßµ¹´ËÊı×é¡£ */
+/* bit0 åœ¨æœ€å·¦ä¾§ï¼Œbit7 åœ¨æœ€å³ä¾§ï¼›å®‰è£…æ–¹å‘ç›¸åæ—¶å¯é¢ å€’æ­¤æ•°ç»„ã€‚ */
 static const int8_t gray_sensor_weight[GRAY_SENSOR_NUM] = {
     -4, -3, -2, -1, 1, 2, 3, 4
 };
@@ -30,7 +23,7 @@ static volatile uint8_t gray_debug_requested;
 static uint8_t gray_debug_state;
 static uint32_t gray_normalize_start_tick;
 
-static void gray_read_binary(void)
+void gray_read_binary(void)
 {
     uint8_t index;
 
@@ -123,7 +116,7 @@ static float gray_calculate_position(void)
         track_sys.track_lost =
             (track_sys.lost_count >= GRAY_LOST_COUNT_MAX) ? 1U : 0U;
 
-        /* ¶ÌÔİÂ©¼ìÊ±±£³ÖÉÏ´ÎÎ»ÖÃ£¬±ÜÃâ¿ØÖÆÁ¿Í»È»Ìøµ½Áã¡£ */
+        /* çŸ­æš‚æ¼æ£€æ—¶ä¿æŒä¸Šæ¬¡ä½ç½®ï¼Œé¿å…æ§åˆ¶é‡çªç„¶è·³åˆ°é›¶ã€‚ */
         return track_sys.line_position;
     }
 
@@ -137,14 +130,14 @@ void Gray_Init(void)
     memset(&track_sys, 0, sizeof(track_sys));
 
     PID_Init(&track_sys.pid,
-             GRAY_PID_KP,
-             GRAY_PID_KI,
-             GRAY_PID_KD,
-             GRAY_OUTPUT_MIN,
-             GRAY_OUTPUT_MAX);
+             15.0f,
+             0.0f,
+             0.0f,
+             -200.0f,
+             200.0f);
     PID_SetIntegralLimits(&track_sys.pid,
-                          GRAY_INTEGRAL_MIN,
-                          GRAY_INTEGRAL_MAX);
+                          -100.0f,
+                          100.0f);
 
     track_sys.target_position = 0.0f;
     track_sys.initialized = 1U;
@@ -226,7 +219,7 @@ uint8_t Grey_PID_Update(void)
     track_sys.pid_output = PID_UpdateError(
         &track_sys.pid,
         track_sys.line_position - track_sys.target_position,
-        GRAY_PID_PERIOD_S);
+        GRAY_PID_PERIOD_MS);
 
     return 0U;
 }

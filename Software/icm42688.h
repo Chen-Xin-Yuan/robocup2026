@@ -1,4 +1,4 @@
-#ifndef __ICM42688_H
+ï»¿#ifndef __ICM42688_H
 #define __ICM42688_H
 
 #include "main.h"
@@ -7,7 +7,7 @@
 // ICM-42688-P 
 #define ICM42688_ADDRESS         0x69
 
-// ¼Ä´æÆ÷µØÖ· (Bank 0)
+// å¯„å­˜å™¨åœ°å€ (Bank 0)
 #define REG_BANK_SEL            0x76
 #define WHO_AM_I                0x75
 #define PWR_MGMT0               0x4E
@@ -19,7 +19,7 @@
 #define GYRO_DATA_X1            0x25
 #define TEMP_DATA1              0x1D
 
-// ´íÎó´úÂë
+// é”™è¯¯ä»£ç 
 #define ICM42688_OK             0
 #define ICM42688_ERR_INIT       1
 #define ICM42688_ERR_COMM       2

@@ -1,13 +1,13 @@
-#ifndef __MPU9250_H
+ï»¿#ifndef __MPU9250_H
 #define __MPU9250_H
 
 #include "stm32f4xx_hal.h"
 
-// AD0 ½ÓµØ ¡ú ÕıÈ·µØÖ·
+// AD0 æ¥åœ° â†’ æ­£ç¡®åœ°å€
 #define MPU6500_ADDRESS     (0x68 << 1)
 
-// ¼Ä´æÆ÷
-#define WHO_AM_I_MPU6500    0x75    // ÕıÈ·ID = 0x70
+// å¯„å­˜å™¨
+#define WHO_AM_I_MPU6500    0x75    // æ­£ç¡®ID = 0x70
 #define PWR_MGMT_1          0x6B
 #define GYRO_CONFIG         0x1B
 #define ACCEL_CONFIG        0x1C
@@ -15,7 +15,7 @@
 #define GYRO_XOUT_H         0x43
 #define TEMP_OUT_H          0x41
 
-// ´íÎóÂë
+// é”™è¯¯ç 
 #define MPU6500_OK          0
 #define MPU6500_ERR_INIT    1
 #define MPU6500_ERR_COMM    2

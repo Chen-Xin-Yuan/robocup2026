@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Header */
+﻿/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file    stm32f4xx_it.c
@@ -24,6 +24,7 @@
 /* USER CODE BEGIN Includes */
 #include "ZDTstepmotor.h"
 #include "usart.h"
+#include "usart_sent.h"
 #include "string.h"
 /* USER CODE END Includes */
 
@@ -61,8 +62,10 @@
 extern TIM_HandleTypeDef htim2;
 extern DMA_HandleTypeDef hdma_usart1_rx;
 extern DMA_HandleTypeDef hdma_usart1_tx;
+extern DMA_HandleTypeDef hdma_usart2_tx;
 extern DMA_HandleTypeDef hdma_usart3_tx;
 extern UART_HandleTypeDef huart1;
+extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
 /* USER CODE BEGIN EV */
 
@@ -221,6 +224,20 @@ void DMA1_Stream3_IRQHandler(void)
 }
 
 /**
+  * @brief This function handles DMA1 stream6 global interrupt.
+  */
+void DMA1_Stream6_IRQHandler(void)
+{
+  /* USER CODE BEGIN DMA1_Stream6_IRQn 0 */
+
+  /* USER CODE END DMA1_Stream6_IRQn 0 */
+  HAL_DMA_IRQHandler(&hdma_usart2_tx);
+  /* USER CODE BEGIN DMA1_Stream6_IRQn 1 */
+
+  /* USER CODE END DMA1_Stream6_IRQn 1 */
+}
+
+/**
   * @brief This function handles TIM2 global interrupt.
   */
 void TIM2_IRQHandler(void)
@@ -241,20 +258,20 @@ void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
 
-	// if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLE����⵽�������?
+	// if(__HAL_UART_GET_FLAG(&huart1, UART_FLAG_IDLE) != RESET)//IDLE锟斤拷锟斤拷獾斤拷锟斤拷锟斤拷锟斤拷?
 	// {
-	// 	__HAL_UART_CLEAR_IDLEFLAG(&huart1); // ���IDLE��־
+	// 	__HAL_UART_CLEAR_IDLEFLAG(&huart1); // 锟斤拷锟絀DLE锟斤拷志
 
 	// 	rxCount = CMD_LEN - __HAL_DMA_GET_COUNTER(&hdma_usart1_rx);
 	// 	HAL_UART_AbortReceive(&huart1); /* RX DMA only; keep TX DMA running */
 
 	// 	if (rxCount > 0U) {
-	// 		ZDT_ProcessRxData((const uint8_t *)rxCmd, rxCount);// ������յ����ٶ�����??
+	// 		ZDT_ProcessRxData((const uint8_t *)rxCmd, rxCount);// 锟斤拷锟斤拷锟斤拷盏锟斤拷锟斤拷俣锟斤拷锟斤拷锟??
 	// 	}
 		 
-	// 	rxFrameFlag = true; // ��λһ֡���������ϱ�־λ
+	// 	rxFrameFlag = true; // 锟斤拷位一帧锟斤拷锟斤拷锟斤拷锟斤拷锟较憋拷志位
 		
-	// 	HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN);//��rxCmd��������Ϣ
+	// 	HAL_UART_Receive_DMA(&huart1, (uint8_t *)rxCmd, CMD_LEN);//锟斤拷rxCmd锟斤拷锟斤拷锟斤拷锟斤拷息
 	// }
   
   /* USER CODE END USART1_IRQn 0 */
@@ -262,6 +279,30 @@ void USART1_IRQHandler(void)
   /* USER CODE BEGIN USART1_IRQn 1 */
 
   /* USER CODE END USART1_IRQn 1 */
+}
+
+/**
+  * @brief This function handles USART2 global interrupt.
+  */
+void USART2_IRQHandler(void)
+{
+  /* USER CODE BEGIN USART2_IRQn 0 */
+  /* 对十字时的串口接收中断才管用 */
+  if(overall_task_state == 2U && task1_state == 22U)
+  {
+    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != RESET) {
+        Align_OnByte((uint8_t)(huart2.Instance->DR & 0xFFU));
+    }
+    /* 清溢出标志，避免 RXNE 被卡住 */
+    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) != RESET) {
+        (void)huart2.Instance->DR;
+    }
+  }
+  /* USER CODE END USART2_IRQn 0 */
+  HAL_UART_IRQHandler(&huart2);
+  /* USER CODE BEGIN USART2_IRQn 1 */
+
+  /* USER CODE END USART2_IRQn 1 */
 }
 
 /**

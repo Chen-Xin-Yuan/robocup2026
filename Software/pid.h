@@ -75,7 +75,7 @@ float PID_Update(PID_t *pid, float setpoint, float feedback, float dt_s);
  * @brief 使用调用者预先计算好的误差执行一次 PID 计算
  * @note  适用于角度环绕误差或其他非线性误差
  */
-float PID_UpdateError(PID_t *pid, float error, float dt_s);
+float PID_UpdateError(PID_t *pid, float error, uint16_t dt_ms);
 
 #ifdef __cplusplus
 }

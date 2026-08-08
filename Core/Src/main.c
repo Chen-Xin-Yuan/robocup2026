@@ -1,4 +1,4 @@
-/* USER CODE BEGIN Header */
+﻿/* USER CODE BEGIN Header */
 /**
   ******************************************************************************
   * @file           : main.c
@@ -39,8 +39,12 @@
 #include "ZDTstepmotor.h"
 #include "control.h"
 #include "gray.h"
+#include "usart_sent.h"
+#include "task.h"
 #include <stdio.h>
 #include <stdarg.h>
+#include <string.h>
+#include <stdlib.h>
 
 
 
@@ -54,6 +58,14 @@
 
 /* Private define ------------------------------------------------------------*/
 /* USER CODE BEGIN PD */
+#define TASK1_TRACK_TIME_MS      10000U   /* 任务1循迹时长上限 */
+#define K210_WAIT_QR_MS          15000U   /* 等K210二维码结果超时 */
+#define K210_WAIT_CROSS_MS       10000U   /* 等K210十字对准超时 */
+#define K210_STRAFE_LINE_MS      8000U    /* 向左找黑线超时 */
+
+
+//控制
+// #define debug  
 
 /* USER CODE END PD */
 
@@ -65,15 +77,19 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
-uint8_t overall_task_state = 0;
+uint8_t overall_task_state = 1;
 
-uint16_t task1_state = 0;
-uint16_t task2_state = 0;
+uint8_t QR_scanning_state = 11;
+uint8_t task1_state = 0;
+uint8_t task2_state = 0;
+uint8_t qr_task1_number = 0;
+uint8_t qr_task2_number = 0;
 
 float world_yaw = 0;
 float body_vx = 0;
 float body_vy = 0;
 
+float cmd_x, cmd_y, cmd_yaw;   /* 上位机命令: 需要纠正的 x/y/yaw */
 
 /* USER CODE END PV */
 
@@ -85,41 +101,12 @@ void SystemClock_Config(void);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-#define TX_BUF_SIZE    256
-uint8_t UART_DMA_Buf[TX_BUF_SIZE];
-
 int fputc(int ch, FILE *stream)
 {
     uint8_t c = ch;
     HAL_UART_Transmit(&huart2, &c, 1, 0xFFFF);
     return ch;
-}
-
-void uart_printf(const char *format, ...)
-{
-    va_list args;
-    int len;
-
-    /* This function runs from TIM2 IRQ: never wait for another IRQ here. */
-    if ((format == NULL) || (huart2.gState != HAL_UART_STATE_READY)){
-        return;    
-    }
-
-    va_start(args, format);
-    len = vsnprintf((char*)UART_DMA_Buf, TX_BUF_SIZE, format, args);
-    va_end(args);
-
-    if (len <= 0) {
-        return;
-    }
-    if (len >= TX_BUF_SIZE) {
-        len = TX_BUF_SIZE - 1;
-    }
-
-    (void)HAL_UART_Transmit_DMA(&huart2, UART_DMA_Buf, (uint16_t)len);
-}
-
-/* USER CODE END 0 */
+}/* USER CODE END 0 */
 
 /**
   * @brief  The application entry point.
@@ -170,11 +157,13 @@ int main(void)
 
   Chassis_Init(&huart1);
   Gray_Init();
-  Servo_Init();
+
+  Align_RxInit();   /* 串口2接收中断：上位机命令帧（x/y/yaw + 完毕帧） */
+
 
   // printf("System start\r\n");
   HAL_TIM_Base_Start_IT(&htim2);
-
+  Servo_Init();
   // ServoBus_Test();
 	// Chassis_Test();
 
@@ -185,65 +174,159 @@ int main(void)
   /* USER CODE BEGIN WHILE */
   while (1)
   {
-
-  
-
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
+    /* 上位机串口命令（帧头+帧尾带 x/y/yaw 纠正量）-> 位置纠正演示 */
 
+#ifndef debug
     switch (overall_task_state){
-      case 0://二维码识别阶段
+      case 1://二维码识别阶段
+        switch(QR_scanning_state)
+        {
+          case 11://开环移动到指定地方（从HOME出发，接近左侧二维码/黑线区域）
+            Chassis_MovePosBlocking(-0.25f,0.0f,0.0f);
+            HAL_Delay(1000);
+         
+            Chassis_MovePosBlocking(0.0f,0.65f,0.0f);
+            HAL_Delay(1000);
+            QR_scanning_state = 12;
+            break;
 
+          case 12:
+            /* 1) 向K210发送消息，进入死等阶段（不收到消息卡死在这里） */
+            // K210_Send("SCAN1\n");
+            // {
+            //   int num = K210_WaitNumber(K210_WAIT_QR_MS);
+            //   if ((num < 1) || (num > 16)) {   /* 任务1二维码对应数字 1~16 */
+            //     Chassis_stop();                /* 超时/无效：停住便于排查 */
+            //     break;
+            //   }
+            //   qr_task1_number = (uint8_t)num;
+            // }
 
+            /* 2) 再向左移动到灰度中间两个(3,4)同时检测到黑线停止 */
+            Chassis_StrafeLeftUntilLine(0.10f, K210_STRAFE_LINE_MS);
+            Servo_SetAngle(96);
+            HAL_Delay(1500);
+            /* 3) 同时向K210发送消息，提示任务一开始 */
+            K210_Send("GO\n");
+            overall_task_state = 2;
+            task1_state = 21;
+            /* 4) 之后 overall_task_state 转移到任务1 */
+            break;
 
+          default:break;
+        }
         break;
 
-      case 1://任务1阶段
+      case 2://任务1阶段
         switch (task1_state)
         {
-          case 11://循迹捡物块阶段
+          case 21://循迹捡物块阶段，示例写法见中断
+          {
+            // uint32_t end_tick = HAL_GetTick() + TASK1_TRACK_TIME_MS;
+            // while ((int32_t)(HAL_GetTick() - end_tick) < 0) {
+            //   /* 与TIM2中断里一样的循迹写法 */
+            //   if (Grey_PID_Update() == 0U) {
+            //     Chassis_TrackDifferential(0.2f, Grey_Get_Output());
+            //   } else {
+            //     Chassis_stop();   /* 丢线 */
+            //     break;
+            //   }
+            //   HAL_Delay(10U);
+            // }
+            // Chassis_stop();
+            // task1_state = 22;
+          }
+          break;
+
+          case 22://捡完物块去找点
+            /* 第一步：把角度旋转到 -90 度，用静态角度环 */
+            HAL_Delay(500);
+            Control_StaticTurn(-90.0f, 5000U);
+
+            /* 第二步：动态角度环 + 对应延时到指定位置（速度 0.2 m/s，数值按场地标定） */
+            /* 对比用：原来的定位置移动（阻塞式） */
+            // Chassis_MovePosBlocking(0.0f, -0.60f, 0.0f);
+            // Chassis_MovePosBlocking(-0.58f, 0.0f, 0.0f);
+
+            Control_Init();
             
-            break;
-          
-          case 12://捡完物块去找点
+            Control_MoveHoldYaw(-0.2f, 0.0f, -90.0f, 0.60f, 0.2f);//vx
+            Control_MoveHoldYaw(0.0f, 0.2f, -90.0f, 0.58f, 0.2f);
 
+            /* 第三步：和K210通信，视觉闭环对准十字（对准后 yaw 自动纠正为 -90°） */
+            // K210_Send("ALIGN\n");
+            // (void)Control_AlignCross(K210_WAIT_CROSS_MS);
+            // Control_AlignTest(2.1f, 5.2f, 2.1f);
+            /* 进入上位机手动调整模式：等待纠正帧，收到完毕帧(AA 00 0A)后退出 */
+            align_flag = 1U;
+            Align_SendRequest();   /* 向上位机请求回传 x/y/yaw */
+            while (align_flag)
+            {
+              if (Align_GetCorrection(&cmd_x, &cmd_y, &cmd_yaw) != 0U) {
+                uart_printf("x=%.1fcm y=%.1fcm yaw=%.1fdeg\r\n",
+                            (double)cmd_x, (double)cmd_y, (double)cmd_yaw);
+                Control_AlignTest(cmd_x, cmd_y, cmd_yaw);
+              }
+              HAL_Delay(100);
+            }
+            Align_SendDone();   /* 调整完毕: 回传 ALIGN_DONE 给上位机确认 */
+            /* 收到结束: 把当前 yaw 纠正为 -90°（消除 IMU 累计漂移） */
+            Control_CorrectYawDeg(-90.0f);
+            
+            Chassis_MovePosBlocking(0.0f, -0.20f, 0.0f);
+            ServoBus_SetAngle(Servo_angle[1]);
+            HAL_Delay(500);
+            /* 任务1完成 → 进入任务2（可按策略改成直接返程） */
+            overall_task_state = 3;
+            task2_state = 31;
             break;
 
-          default:
-            break;
+          default:break;
         }
-
-
         break;
 
-      case 2://任务2阶段
+      case 3://任务2阶段
         switch (task2_state)
         {
-        case 21 :
-          /* code */
-          break;
-        case 22 :
-        
-          break;
+          case 31://扫描任务2二维码（HOME右侧）
+            K210_Send("SCAN2\n");
+            {
+              int num = K210_WaitNumber(K210_WAIT_QR_MS);
+              if ((num < 1) || (num > 6)) {    /* 任务2二维码对应数字 1~6 */
+                Chassis_stop();
+                break;
+              }
+              qr_task2_number = (uint8_t)num;
+            }
+            task2_state = 32;
+            break;
 
-        default:
+          case 32://按方案把 A/B/C 搬到领奖台（A→冠军、B→亚军、C→季军）
+            /* TODO: 按你的机械结构写搬运流程，这里给占位：
+               1) 定位置移动到任务2物料区
+               2) 依次夹取 A/B/C（舵机动作）
+               3) 按 qr_task2_number 的方案移动到领奖台放置 */
+            Chassis_stop();
+            overall_task_state = 4;   /* 搬运完成，返程 */
+            break;
 
-          break;
+          default:break;
         }
-        
         break;
 
-      case 3://返程阶段
-
+      case 4://返程阶段
+        /* 定位置移动回 HOME（数值按场地标定） */
+        Chassis_MovePosBlocking(0.0f, -0.40f, 0.0f);
+        Chassis_stop();
+        overall_task_state = 0;   /* 结束 */
         break;
 
-      default:
-
-        break;
-
+      default:break;
     }
-
+#endif
 
   }
   /* USER CODE END 3 */
@@ -305,10 +388,12 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 		static uint16_t count1=0;
 		static uint16_t count2=0;
 		static uint16_t count3=0;
+		static uint16_t count4=0;
 
 		count1++;
 		count2++;
 		count3++;
+		count4++;
 
 
 		if(count1>=5)
@@ -329,42 +414,58 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
       count2 = 0;
     }
-    if(count3 >= 40)
+    if(count3 >= GRAY_PID_PERIOD_MS)
     {
-      // gray_show_digital();
-      // uart_printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
-      //   eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
      
       static uint16_t servo_count = 0U;
       static uint8_t servo_index = 0;
       static bool IS_zhuan = true;
 
-      servo_count++;
-      if (servo_count>=62 && IS_zhuan)
+      if(overall_task_state == 2 && task1_state == 21)
       {
-        servo_count = 0U;               
-        servo_index ++;
-        if (servo_index == 5)
+        servo_count++;
+        #ifndef debug
+        if (servo_count>=55 && IS_zhuan)
         {
-          IS_zhuan = false;       
+        #endif
+          servo_count = 0U;               
+          servo_index ++;
+          if (servo_index == 5)
+          {
+            IS_zhuan = false;       
+          }
+          ServoBus_SetAngle(Servo_angle[servo_index]);
         }
-        ServoBus_SetAngle(Servo_angle[servo_index]);
-      }
 
-      if (Grey_PID_Update() == 0U && IS_zhuan)
-      {
-          Chassis_TrackDifferential(0.2f, Grey_Get_Output());
-      } 
-      else 
-      {
-          Chassis_stop();
-      }
+        if (Grey_PID_Update() == 0U && IS_zhuan)
+        {
+            Chassis_TrackDifferential(0.2f, Grey_Get_Output());
+        } 
+        else 
+        {
+            Chassis_stop();
+            task1_state = 22;
+        }
 
+      #ifndef debug
+      }
+      #endif
 		count3 = 0;
     }
+
+    if(count4 >= 1000)
+    {     
+      // gray_show_digital();
+      uart_printf("Yaw: %.2f, Pitch: %.2f, Roll: %.2f\r\n", 
+        eulerAngle.yaw, eulerAngle.pitch, eulerAngle.roll);
+
+      count4 = 0;
+    }
+
 	}
 }
 
+//任何一个串口发送完成就会调用此函数，发送完成回调函数
 void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   Emm_V5_TxCpltCallback(huart);

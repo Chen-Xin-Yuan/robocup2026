@@ -1,10 +1,10 @@
-#ifndef ALL_INIT_H
+ï»¿#ifndef ALL_INIT_H
 #define ALL_INIT_H
 #include "main.h"
 #include "tim.h"
 
 
-/* ----- Ó²¼þÒý½Å¶¨Òå£¨°´Êµ¼ÊÐÞ¸Ä£©----- */
+/* ----- ç¡¬ä»¶å¼•è„šå®šä¹‰ï¼ˆæŒ‰å®žé™…ä¿®æ”¹ï¼‰----- */
 #define DEBUG_LED_PIN      GPIO_PIN_12
 #define DEBUG_LED_PORT     GPIOB
 #define DEBUG_LED_CLK_EN() __HAL_RCC_GPIOB_CLK_ENABLE()

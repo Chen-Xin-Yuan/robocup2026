@@ -1,4 +1,4 @@
-#ifndef __ASFL_CAR_CHASSIS_H__
+﻿#ifndef __ASFL_CAR_CHASSIS_H__
 #define __ASFL_CAR_CHASSIS_H__
 #include "main.h"
 
@@ -93,6 +93,12 @@ void Chassis_GetBodySpeed(float *vx, float *vy, float *omega);
 /*================== 测试/任务函数 ==================*/
 
 void Chassis_Test(void);
+
+
+/*================== 状态机辅助函数 ==================*/
+void Chassis_OpenLoopMove(float vx, float vy, float omega, uint32_t duration_ms);
+uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg);
+void Chassis_StrafeLeftUntilLine(float speed, uint32_t timeout_ms);
 
 
 #endif
