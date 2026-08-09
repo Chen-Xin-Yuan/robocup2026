@@ -81,8 +81,8 @@ void Control_Init(void)
 
     /* PID 参数在这里修改 */
     PID_Init(&Control_DynamicAnglePID,
-             1.2f,
-             0.001f,
+             3.2f,
+             0.005f,
              0.05f,
              -40.0f,
              40.0f);
@@ -229,7 +229,7 @@ void Control_YawInit(void)
     memset(&Control_StaticAngle, 0, sizeof(Control_StaticAngle));
 
     Control_StaticAngle.max_omega_deg_s = 40.0f;
-    Control_StaticAngle.tolerance_deg = 0.5f;
+    Control_StaticAngle.tolerance_deg = 0.15f;
     Control_StaticAngle.feedback_yaw_deg = Control_GetYawDeg();
     Control_StaticAngle.target_yaw_deg = Control_StaticAngle.feedback_yaw_deg;
     Control_StaticAngle.arrived = 1U;
@@ -237,12 +237,12 @@ void Control_YawInit(void)
 
     /* PID 参数在这里修改 */
     PID_Init(&Control_StaticAngle.pid,
-            1.5f,
-            0.004f,
+            10.5f,
+            0.15f,
             0.05f,
             -Control_StaticAngle.max_omega_deg_s,
             Control_StaticAngle.max_omega_deg_s);
-    PID_SetIntegralLimits(&Control_StaticAngle.pid, -20.0f, 20.0f);
+    PID_SetIntegralLimits(&Control_StaticAngle.pid, -40.0f, 40.0f);
     PID_SetDeadband(&Control_StaticAngle.pid, 0.1f);
     PID_SetDerivativeFilter(&Control_StaticAngle.pid, 0.2f);
 }
@@ -570,10 +570,10 @@ uint8_t Control_StaticTurn(float target_deg, uint32_t timeout_ms)
     /* ② 微调：静态角度环闭环转到目标角度 */
     Control_YawInit();
     Control_YawStart(target_deg);
-    while ((Control_StaticAngle.arrived == 0U)
+    while ((Control_StaticAngle.arrived == 0U)//只有还没到达阈值才会执行
         && ((int32_t)(HAL_GetTick() - start_tick) < (int32_t)timeout_ms)) {
         Control_YawUpdate();
-        HAL_Delay(15U);
+        HAL_Delay(15U);//退出这个循环就结束了函数
     }
     Chassis_stop();
     return Control_StaticAngle.arrived;

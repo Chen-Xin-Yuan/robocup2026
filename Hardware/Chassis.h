@@ -4,7 +4,7 @@
 
 /*================== 常量定义 ==================*/
 #define CHASSIS_PI          3.14159265f
-#define CHASSIS_WIDTH       0.163f       // 左右轮距 (m)
+#define CHASSIS_WIDTH       0.160f       // 左右轮距 (m)
 #define CHASSIS_LENGTH      0.1725f       // 前后轮距 (m)
 #define CHASSIS_WHEEL_DIA   0.08f       // 轮子直径 (m)
 
@@ -99,6 +99,7 @@ void Chassis_Test(void);
 void Chassis_OpenLoopMove(float vx, float vy, float omega, uint32_t duration_ms);
 uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg);
 void Chassis_StrafeLeftUntilLine(float speed, uint32_t timeout_ms);
+void Chassis_StrafeRightUntilLine(float speed, uint32_t timeout_ms);
 
 
 #endif

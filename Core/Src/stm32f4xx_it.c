@@ -287,16 +287,16 @@ void USART1_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-  /* 对十字时的串口接收中断才管用 */
-  if(overall_task_state == 2U && task1_state == 22U)
-  {
-    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != RESET) {
-        Align_OnByte((uint8_t)(huart2.Instance->DR & 0xFFU));
-    }
-    /* 清溢出标志，避免 RXNE 被卡住 */
-    if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) != RESET) {
-        (void)huart2.Instance->DR;
-    }
+  /* USART2 上位机数据帧统一喂给帧状态机(对十字/对圆心/颜色识别共用)，
+   * 不再按任务状态门控：由主逻辑通过 cross_flag / circle_flag /
+   * Color_IsDone() 判断当前该用哪一帧，避免状态条件写错导致收不到数据。
+   */
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != RESET) {
+      Usart2_OnByte((uint8_t)(huart2.Instance->DR & 0xFFU));
+  }
+  /* 清溢出标志，避免 RXNE 被卡住（任何模式下都清） */
+  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) != RESET) {
+      (void)huart2.Instance->DR;
   }
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);

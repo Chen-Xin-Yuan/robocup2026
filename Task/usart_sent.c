@@ -184,62 +184,334 @@ void K210_ClearCross(void)
 
 /* ==================== USART2 上位机命令接收（中断，固定帧格式） ==================== */
 /* 只做接收，不影响 USART2 的 TX DMA 调试打印（uart_printf）。
- * 帧格式(带长度字节, 无校验):
- *   纠正帧: AA 0C <x:4B float> <y:4B float> <yaw:4B float> 0A   (共15字节)
- *   完毕帧: AA 00 0A  -> 上位机结束调整，解析后 align_flag=0
+ * 帧格式(带长度字节, 无校验): AA <长度> <数据...> 0A
+ *
+ *   上位机->车(接收):
+ *     对十字纠正帧: AA 0C <x:4B> <y:4B> <yaw:4B> 0A   (12字节数据, 共15字节)
+ *     对圆心纠正帧: AA 08 <x:4B> <y:4B> 0A            (8字节数据, 只回传x/y, 无yaw)
+ *     颜色帧:       AA 01 <颜色:1B> 0A                (1字节数据, 收满5个不同颜色即结束, 重复自动丢弃)
+ *                   颜色: 0=黑 1=白 2=红 3=绿 4=蓝, 或 ASCII 字母 B/W/R/G/U(不区分大小写)
+ *                   顺序 = 槽位1~5 从左到右
+ *     二维码帧:     AA 04 <编号:1B> 0A                (类型码04, 1字节数据)
+ *                   编号: 任务1=1~16, 任务2=1~6
+ *     完毕帧:       AA 00 0A                          (对十字/对圆心 结束)
+ *
+ *   车->上位机(发送, 请求回传):
+ *     AA 01 0A   请求对十字纠正 (x/y/yaw)
+ *     AA 02 0A   请求对圆心纠正 (x/y)
+ *     AA 03 0A   请求颜色识别 (上位机回5个颜色帧后结束)
+ *     AA 05 0A   请求二维码 (上位机回1个二维码帧)
+ *
  *   - x/y/yaw 为小端 float
  *   - x: 横向偏差(cm,右正)  y: 距离偏差(cm,前正)  yaw: 角度偏差(deg,逆时针正)
  */
-#define ALIGN_FRAME_HEAD       0xAAU   /* 帧头 1 字节 */
-#define ALIGN_FRAME_TAIL       0x0AU   /* 帧尾 1 字节 */
-#define ALIGN_FRAME_LEN        12U     /* 纠正帧数据长度: 3 个 float */
-#define ALIGN_FRAME_DONE_LEN   0x00U   /* 完毕帧长度 */
+#define USART2_FRAME_HEAD        0xAAU   /* 帧头 1 字节 */
+#define USART2_FRAME_TAIL        0x0AU   /* 帧尾 1 字节 */
+#define CROSS_FRAME_LEN          12U     /* 对十字纠正帧数据长度: 3 个 float */
+#define CIRCLE_FRAME_LEN         8U      /* 对圆心纠正帧数据长度: 2 个 float (x/y) */
+#define COLOR_FRAME_LEN          1U      /* 颜色帧数据长度: 1 个颜色 */
+#define QR_FRAME_LEN             4U      /* 二维码帧类型码(数据长度见 QR_DATA_LEN) */
+#define QR_DATA_LEN              1U      /* 二维码帧数据长度: 1 个编号 */
+#define USART2_FRAME_DONE_LEN    0x00U   /* 完毕帧长度 */
 
-static uint8_t align_frame_buf[ALIGN_FRAME_LEN];
-static uint8_t align_frame_idx = 0U;
-static uint8_t align_frame_state = 0U;   /* 0=找帧头 1=等长度 2=收数据 3=等帧尾 4=完毕帧帧尾 */
-static volatile uint8_t align_frame_ready = 0U;
+#define COLOR_MAX                5U      /* 颜色识别: 收满5个不同颜色即结束 */
 
-/* 调整状态标志: 1=等待/正在调整(默认), 0=调整完毕 */
-uint8_t align_flag = 1U;
+static uint8_t usart2_frame_buf[CROSS_FRAME_LEN];   /* 最大帧数据长度 12 */
+static uint8_t usart2_frame_type = 0U;  /* 当前帧类型(长度字节): 0C十字 08圆心 01颜色 04二维码 00完毕 */
+static uint8_t usart2_data_len = 0U;    /* 当前帧数据字节数 */
+static uint8_t usart2_frame_idx = 0U;
+static uint8_t usart2_frame_state = 0U;  /* 0=找帧头 1=等长度 2=收数据 3=等帧尾 4=完毕帧帧尾 */
+static volatile uint8_t cross_frame_ready = 0U;      /* 对十字帧就绪 */
+static volatile uint8_t circle_frame_ready = 0U;     /* 对圆心帧就绪 */
+
+/* 对十字缓存: 帧尾收到时立刻拷出，避免下一帧覆盖 */
+static float cross_x_cm = 0.0f;
+static float cross_y_cm = 0.0f;
+static float cross_yaw_deg = 0.0f;
+
+/* 对圆心缓存 */
+static float circle_x_cm = 0.0f;
+static float circle_y_cm = 0.0f;
+
+/* 调整状态标志: 1=等待/正在调整(默认), 0=调整完毕(收到完毕帧) */
+uint8_t cross_flag = 1U;
+/* 对圆心状态标志: 1=等待/正在对圆心, 0=完毕/未开始 */
+uint8_t circle_flag = 0U;
+
+/* ---- 颜色识别缓存 ---- */
+static uint8_t usart2_colors[COLOR_MAX];      /* 收到的颜色编号 0~4 */
+static volatile uint8_t usart2_color_count = 0U;
+static volatile uint8_t usart2_color_done = 0U;
+
+/* ---- 二维码缓存 ---- */
+static volatile uint8_t usart2_qr_number = 0U;
+static volatile uint8_t usart2_qr_ready = 0U;
+
+/* ==================== USART2 请求帧发送队列 ==================== */
+/* 请求帧(AA 01/02/03/05 0A)通过 DMA 队列发送：即使 uart_printf/灰度打印正占着
+ * USART2，请求帧也先入队、等发送空闲后自动发出，不会丢帧。
+ * 发送完成由 HAL_UART_TxCpltCallback -> Usart2_TxCpltCallback 驱动下一帧。
+ */
+#define USART2_TX_Q_SIZE          8U      /* 队列槽位(每槽一帧3字节) */
+
+typedef struct
+{
+    uint8_t data[3];   /* 请求帧数据(AA XX 0A) */
+    uint8_t len;       /* 帧长度(固定3) */
+} Usart2_TxFrame_t;
+
+static Usart2_TxFrame_t usart2_tx_q[USART2_TX_Q_SIZE];
+static volatile uint8_t usart2_tx_head = 0U;   /* 出队位置(发送完成回调里取) */
+static volatile uint8_t usart2_tx_tail = 0U;   /* 入队位置(主循环放) */
+
+/* 队里有待发帧且串口空闲 -> 启动下一帧 DMA(启动成功才出队) */
+static void usart2_tx_pump(void)
+{
+    if (usart2_tx_head == usart2_tx_tail) {
+        return;   /* 队列空 */
+    }
+    if (huart2.gState == HAL_UART_STATE_READY) {
+        if (HAL_UART_Transmit_DMA(&huart2, usart2_tx_q[usart2_tx_head].data,
+                                  usart2_tx_q[usart2_tx_head].len) == HAL_OK) {
+            usart2_tx_head = (uint8_t)((usart2_tx_head + 1U) % USART2_TX_Q_SIZE);
+        }
+    }
+}
+
+/* 请求帧入队(主循环调用)：串口空闲则立即发，否则排队等空闲 */
+static void usart2_tx_queue(const uint8_t *data, uint8_t len)
+{
+    uint8_t next;
+
+    if ((data == NULL) || (len > 3U)) {
+        return;
+    }
+    next = (uint8_t)((usart2_tx_tail + 1U) % USART2_TX_Q_SIZE);
+    if (next == usart2_tx_head) {
+        /* 队列满：丢弃最旧一帧，保证最新请求一定能入队 */
+        usart2_tx_head = (uint8_t)((usart2_tx_head + 1U) % USART2_TX_Q_SIZE);
+    }
+    memcpy(usart2_tx_q[usart2_tx_tail].data, data, len);
+    usart2_tx_q[usart2_tx_tail].len = len;
+    usart2_tx_tail = next;
+    usart2_tx_pump();
+}
+
+/* DMA 发送完成回调(由 main.c 的 HAL_UART_TxCpltCallback 转发)：自动发下一帧 */
+void Usart2_TxCpltCallback(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart2) {
+        usart2_tx_pump();
+    }
+}
 
 /* 启动 USART2 接收中断（NVIC 已在 CubeMX 配好，这里只需使能 RXNE） */
-void Align_RxInit(void)
+void Usart2_RxInit(void)
 {
-    align_frame_idx = 0U;
-    align_frame_state = 0U;
-    align_frame_ready = 0U;
+    usart2_frame_idx = 0U;
+    usart2_frame_state = 0U;
+    cross_frame_ready = 0U;
+    circle_frame_ready = 0U;
+    usart2_qr_ready = 0U;
+    usart2_qr_number = 0U;
     __HAL_UART_ENABLE_IT(&huart2, UART_IT_RXNE);
 }
 
+/* 把颜色字节解析为颜色编号(0~4)；非法返回 0xFF */
+static uint8_t usart2_color_parse(uint8_t ch)
+{
+    if (ch <= 4U) {
+        return ch;
+    }
+    switch (ch) {
+        case 'B': case 'b': return 0U;   /* 黑 */
+        case 'W': case 'w': return 1U;   /* 白 */
+        case 'R': case 'r': return 2U;   /* 红 */
+        case 'G': case 'g': return 3U;   /* 绿 */
+        case 'U': case 'u': return 4U;   /* 蓝 */
+        default: return 0xFFU;
+    }
+}
+
+/* 收一个颜色(中断内调用)：重复颜色自动丢弃，收满5个不同颜色置 done */
+static void usart2_color_add(uint8_t ch)
+{
+    uint8_t c;
+    uint8_t i;
+
+    if (usart2_color_done != 0U) {
+        return;   /* 已收满5个不同颜色，忽略后续 */
+    }
+    c = usart2_color_parse(ch);
+    if (c >= 5U) {
+        return;   /* 非法颜色，忽略 */
+    }
+    /* 重复颜色：自动丢弃后一个(不计入)，继续检测直到凑齐5个不同颜色 */
+    for (i = 0U; i < (uint8_t)usart2_color_count; i++) {
+        if (usart2_colors[i] == c) {
+            return;
+        }
+    }
+    usart2_colors[usart2_color_count] = c;
+    usart2_color_count++;
+    if (usart2_color_count >= COLOR_MAX) {
+        usart2_color_done = 1U;   /* 收满5个不同颜色，识别结束 */
+    }
+}
+
+/* ==================== 颜色识别接口 ==================== */
+
+/* 当前已收到颜色个数(0~5) */
+uint8_t Color_GetCount(void)
+{
+    return (uint8_t)usart2_color_count;
+}
+
+/* 取第 i 个颜色编号(0=黑 1=白 2=红 3=绿 4=蓝)；越界返回 0xFF */
+uint8_t Color_GetColor(uint8_t i)
+{
+    if (i >= (uint8_t)usart2_color_count) {
+        return 0xFFU;
+    }
+    return usart2_colors[i];
+}
+
+/* 是否已收满5个颜色(识别结束) */
+uint8_t Color_IsDone(void)
+{
+    return (uint8_t)usart2_color_done;
+}
+
+/* 清空颜色缓存，开始新一轮识别 */
+void Color_Reset(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    usart2_color_count = 0U;
+    usart2_color_done = 0U;
+    __set_PRIMASK(primask);
+}
+
+/* 请求上位机开始颜色识别（发送 AA 03 0A，走发送队列不丢帧） */
+void Color_SendRequest(void)
+{
+    static const uint8_t frame[3] = {USART2_FRAME_HEAD, 0x03U, USART2_FRAME_TAIL};
+    usart2_tx_queue(frame, 3U);
+}
+
+/* ==================== 二维码接口 ==================== */
+
+/* 收到二维码帧时(中断内)调用 */
+static void usart2_qr_add(uint8_t ch)
+{
+    usart2_qr_number = ch;
+    usart2_qr_ready = 1U;
+}
+
+/* 是否有新的二维码编号就绪 */
+uint8_t QR_IsReady(void)
+{
+    return (uint8_t)usart2_qr_ready;
+}
+
+/* 取二维码编号(任务1=1~16, 任务2=1~6，范围由调用方校验) */
+uint8_t QR_GetNumber(void)
+{
+    return (uint8_t)usart2_qr_number;
+}
+
+/* 清空二维码缓存，开始新一轮等待 */
+void QR_Reset(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    usart2_qr_ready = 0U;
+    usart2_qr_number = 0U;
+    __set_PRIMASK(primask);
+}
+
+/* 请求上位机回传二维码（发送 AA 05 0A，走发送队列不丢帧） */
+void QR_SendRequest(void)
+{
+    static const uint8_t frame[3] = {USART2_FRAME_HEAD, 0x05U, USART2_FRAME_TAIL};
+    usart2_tx_queue(frame, 3U);
+}
+
+/* ==================== 对圆心接口 ==================== */
+
+/* 非阻塞取一帧圆心纠正量(x/y)，返回 1=收到新帧并写入；0=暂无 */
+uint8_t Circle_GetCorrection(float *x_cm, float *y_cm)
+{
+    uint32_t primask;
+    float vx;
+    float vy;
+
+    if (circle_frame_ready == 0U) {
+        return 0U;
+    }
+    primask = __get_PRIMASK();
+    __disable_irq();
+    if (circle_frame_ready == 0U) {
+        __set_PRIMASK(primask);
+        return 0U;
+    }
+    circle_frame_ready = 0U;
+    __set_PRIMASK(primask);
+
+    vx = circle_x_cm;
+    vy = circle_y_cm;
+    if (x_cm != NULL) {
+        *x_cm = vx;
+    }
+    if (y_cm != NULL) {
+        *y_cm = vy;
+    }
+    return 1U;
+}
+
+/* 请求上位机回传圆心 x/y（发送 AA 02 0A，走发送队列不丢帧） */
+void Circle_SendRequest(void)
+{
+    static const uint8_t frame[3] = {USART2_FRAME_HEAD, 0x02U, USART2_FRAME_TAIL};
+    usart2_tx_queue(frame, 3U);
+}
+
+/* 对圆心调整完毕: circle_flag 置 0，并回传信号给上位机 */
+void Circle_SendDone(void)
+{
+    circle_flag = 0U;
+    uart_printf("CIRCLE_DONE\r\n");
+}
+
+/* ==================== 对十字接口(原有) ==================== */
+
 /* 非阻塞取一帧纠正量，返回 1=收到有效帧并写入 x/y/yaw；0=暂无 */
-uint8_t Align_GetCorrection(float *x_cm, float *y_cm, float *yaw_deg)
+uint8_t Cross_GetCorrection(float *x_cm, float *y_cm, float *yaw_deg)
 {
     uint32_t primask;
     float vx;
     float vy;
     float vyaw;
 
-    if (align_frame_ready == 0U) {
+    if (cross_frame_ready == 0U) {
         return 0U;
     }
 
     /* 关中断取走整帧，避免和接收中断竞争 */
     primask = __get_PRIMASK();
     __disable_irq();
-    if (align_frame_ready == 0U) {
+    if (cross_frame_ready == 0U) {
         __set_PRIMASK(primask);
         return 0U;
     }
-    align_frame_ready = 0U;
+    cross_frame_ready = 0U;
     __set_PRIMASK(primask);
 
-    align_flag = 1U;   /* 收到命令，开始调整 */
+    cross_flag = 1U;   /* 收到命令，开始调整 */
 
-    /* 小端 float */
-    memcpy(&vx, &align_frame_buf[0], 4U);
-    memcpy(&vy, &align_frame_buf[4], 4U);
-    memcpy(&vyaw, &align_frame_buf[8], 4U);
+    vx = cross_x_cm;
+    vy = cross_y_cm;
+    vyaw = cross_yaw_deg;
 
     if (x_cm != NULL) {
         *x_cm = vx;
@@ -254,67 +526,98 @@ uint8_t Align_GetCorrection(float *x_cm, float *y_cm, float *yaw_deg)
 }
 
 /* 请求帧: AA 01 0A（车->上位机：请回传 x/y/yaw 纠正量） */
-static uint8_t align_req_frame[3] = {0xAAU, 0x01U, 0x0AU};
+static uint8_t cross_req_frame[3] = {0xAAU, 0x01U, 0x0AU};
 
-/* 向上位机请求回传 x/y/yaw（发送 AA 01 0A） */
-void Align_SendRequest(void)
+/* 向上位机请求回传 x/y/yaw（发送 AA 01 0A，走发送队列不丢帧） */
+void Cross_SendRequest(void)
 {
-    /* 等 USART2 空闲再发，避免打断 uart_printf 的 TX DMA */
-    if (huart2.gState == HAL_UART_STATE_READY) {
-        (void)HAL_UART_Transmit(&huart2, align_req_frame, 3U, 10U);
-    }
+    usart2_tx_queue(cross_req_frame, 3U);
 }
 
-/* 调整完毕: align_flag 置 0，并回传信号给上位机 */
-void Align_SendDone(void)
+/* 调整完毕: cross_flag 置 0，并回传信号给上位机 */
+void Cross_SendDone(void)
 {
-    align_flag = 0U;
+    cross_flag = 0U;
     uart_printf("ALIGN_DONE\r\n");//传给上位机，不是k210
 }
 
-/* 由 USART2_IRQHandler 直接调用：每收到一个字节走一次帧状态机 */
-void Align_OnByte(uint8_t ch)
+/* 由 USART2_IRQHandler 直接调用：每收到一个字节走一次帧状态机。
+ * 对十字/对圆心/颜色识别共用同一个帧状态机，按"长度字节"区分帧类型。
+ */
+void Usart2_OnByte(uint8_t ch)
 {
-    switch (align_frame_state) {
+    switch (usart2_frame_state) {
         case 0U:   /* 等帧头 AA */
-            if (ch == ALIGN_FRAME_HEAD) {
-                align_frame_state = 1U;
+            if (ch == USART2_FRAME_HEAD) {
+                usart2_frame_state = 1U;
             }
             break;
-        case 1U:   /* 等长度: 0C=纠正帧, 00=完毕帧 */
-            if (ch == ALIGN_FRAME_LEN) {
-                align_frame_idx = 0U;
-                align_frame_state = 2U;
-            } else if (ch == ALIGN_FRAME_DONE_LEN) {
-                align_frame_state = 4U;   /* 完毕帧 */
-            } else if (ch == ALIGN_FRAME_HEAD) {
-                align_frame_state = 1U;   /* 连续 AA：当作新的帧头，重新等长度 */
+        case 1U:   /* 等长度(类型): 0C=对十字 08=对圆心 01=颜色 04=二维码 00=完毕 */
+            usart2_frame_type = 0U;
+            usart2_data_len = 0U;
+            usart2_frame_idx = 0U;
+            if (ch == CROSS_FRAME_LEN) {
+                usart2_frame_type = CROSS_FRAME_LEN;
+                usart2_data_len = CROSS_FRAME_LEN;
+                usart2_frame_state = 2U;
+            } else if (ch == CIRCLE_FRAME_LEN) {
+                usart2_frame_type = CIRCLE_FRAME_LEN;
+                usart2_data_len = CIRCLE_FRAME_LEN;
+                usart2_frame_state = 2U;
+            } else if (ch == COLOR_FRAME_LEN) {
+                usart2_frame_type = COLOR_FRAME_LEN;
+                usart2_data_len = COLOR_FRAME_LEN;
+                usart2_frame_state = 2U;
+            } else if (ch == QR_FRAME_LEN) {
+                usart2_frame_type = QR_FRAME_LEN;
+                usart2_data_len = QR_DATA_LEN;
+                usart2_frame_state = 2U;
+            } else if (ch == USART2_FRAME_DONE_LEN) {
+                usart2_frame_state = 4U;   /* 完毕帧 */
+            } else if (ch == USART2_FRAME_HEAD) {
+                usart2_frame_state = 1U;   /* 连续 AA：当作新的帧头，重新等长度 */
             } else {
-                align_frame_state = 0U;
+                usart2_frame_state = 0U;
             }
             break;
-        case 2U:   /* 收满 12 字节数据 */
-            if (align_frame_idx < ALIGN_FRAME_LEN) {
-                align_frame_buf[align_frame_idx++] = ch;
+        case 2U:   /* 收数据 */
+            if (usart2_frame_idx < usart2_data_len) {
+                usart2_frame_buf[usart2_frame_idx++] = ch;
             }
-            if (align_frame_idx >= ALIGN_FRAME_LEN) {
-                align_frame_state = 3U;
+            if (usart2_frame_idx >= usart2_data_len) {
+                usart2_frame_state = 3U;
             }
             break;
-        case 3U:   /* 等帧尾 0A */
-            if (ch == ALIGN_FRAME_TAIL) {
-                align_frame_ready = 1U;   /* 收到完整纠正帧 */
+        case 3U:   /* 等帧尾 0A -> 按帧类型分发 */
+            if (ch == USART2_FRAME_TAIL) {
+                if (usart2_frame_type == CROSS_FRAME_LEN) {
+                    /* 对十字: 拷出 x/y/yaw，置就绪 */
+                    memcpy(&cross_x_cm, &usart2_frame_buf[0], 4U);
+                    memcpy(&cross_y_cm, &usart2_frame_buf[4], 4U);
+                    memcpy(&cross_yaw_deg, &usart2_frame_buf[8], 4U);
+                    cross_frame_ready = 1U;
+                } else if (usart2_frame_type == CIRCLE_FRAME_LEN) {
+                    /* 对圆心: 只解析 x/y，不解析 yaw */
+                    memcpy(&circle_x_cm, &usart2_frame_buf[0], 4U);
+                    memcpy(&circle_y_cm, &usart2_frame_buf[4], 4U);
+                    circle_frame_ready = 1U;
+                } else if (usart2_frame_type == COLOR_FRAME_LEN) {
+                    usart2_color_add(usart2_frame_buf[0]);   /* 收一个颜色 */
+                } else if (usart2_frame_type == QR_FRAME_LEN) {
+                    usart2_qr_add(usart2_frame_buf[0]);      /* 收二维码编号 */
+                }
             }
-            align_frame_state = 0U;
+            usart2_frame_state = 0U;
             break;
-        case 4U:   /* 完毕帧: 等帧尾 0A -> 调整完毕 */
-            if (ch == ALIGN_FRAME_TAIL) {
-                align_flag = 0U;   /* 上位机结束调整 */
+        case 4U:   /* 完毕帧: 等帧尾 0A -> 对十字/对圆心结束 */
+            if (ch == USART2_FRAME_TAIL) {
+                cross_flag = 0U;    /* 对十字结束 */
+                circle_flag = 0U;   /* 对圆心结束 */
             }
-            align_frame_state = 0U;
+            usart2_frame_state = 0U;
             break;
         default:
-            align_frame_state = 0U;
+            usart2_frame_state = 0U;
             break;
     }
 

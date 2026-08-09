@@ -400,3 +400,25 @@ void Chassis_StrafeLeftUntilLine(float speed, uint32_t timeout_ms)
     }
     Chassis_stop();
 }
+
+/**
+ * @brief 向右横移，直到灰度中间两个传感器(3,4)同时检测到黑线
+ * @param speed      横移速度 (m/s, 正=向右)
+ * @param timeout_ms 超时(ms)
+ */
+void Chassis_StrafeRightUntilLine(float speed, uint32_t timeout_ms)
+{
+    uint32_t start_tick = HAL_GetTick();
+
+    while ((int32_t)(HAL_GetTick() - start_tick) < (int32_t)timeout_ms)
+     {
+        (void)gray_read_binary();   /* 刷新灰度 sensor_binary */
+        if ((track_sys.sensor_binary[3] == 0U) ||
+            (track_sys.sensor_binary[4] == 0U)) {
+            break;   /* 中间两个都压到黑线 */
+        }
+        Chassis_Move(speed, 0.0f, 0.0f);   /* 向右 = +x */
+        HAL_Delay(5U);
+    }
+    Chassis_stop();
+}

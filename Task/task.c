@@ -10,7 +10,7 @@ float task1_move_distance_X_m[5] =
     -0.20f,
     -0.60f,
     -0.11f,
-    -50.0f
+    -0.50f
 };
 float task1_move_distance_Y_m[5] = 
 {
@@ -28,7 +28,7 @@ bool is_align[5]=
     false,
     true,
     false
-}
+};
 
 
 /* ==================== 方案表（来源于规则附录） ==================== */
@@ -72,10 +72,10 @@ static const uint8_t task2_scheme[6][3] = {
 /* 颜色字母表: B=黑 W=白 R=红 G=绿 U=蓝 */
 static const char task1_color_letter[5] = {'B', 'W', 'R', 'G', 'U'};
 
-/* 任务2 奖杯放置目标(打印用): 0=A->冠军 1=B->亚军 2=C->季军 */
-static const char *const task2_target_cn[3] = {"\xe5\x86\xa0\xe5\x86\x9b",
-                                               "\xe4\xba\x9a\xe5\x86\x9b",
-                                               "\xe5\xad\xa3\xe5\x86\x9b"};
+/* 任务2 奖杯放置目标(打印用): 0=A->champion 1=B->runner-up 2=C->third */
+static const char *const task2_target_en[3] = {"champion",
+                                               "runner-up",
+                                               "third"};
 
 /* 将一个颜色字符(ASCII字母或UTF-8中文)解析为颜色编号(0~4)，并更新读取位置
  * 返回 0~4 成功; 0xFF 未知字符/编码不完整
@@ -197,9 +197,13 @@ static uint8_t task2_parse_abc(const char *str, uint8_t out[3])
 
 /* ==================== 对外接口 ==================== */
 
-uint8_t Task1_QRPlan(uint8_t qr_code, const char *colors_left_to_right, uint8_t plan[5])
+/* 内部: 由槽位颜色编号数组(从左到右) + 二维码编号，计算搬运方案
+ * observed[j] = 槽位 j+1 的颜色编号(0=黑 1=白 2=红 3=绿 4=蓝)
+ * plan[i] = 第 i 步去的槽位号(1~5)
+ * 返回: TASK_PLAN_OK / TASK_PLAN_ERR_QR / TASK_PLAN_ERR_INPUT
+ */
+static uint8_t task1_build_plan(uint8_t qr_code, const uint8_t observed[5], uint8_t plan[5])
 {
-    uint8_t observed[5];
     uint8_t i;
     uint8_t j;
     const uint8_t *scheme;
@@ -207,23 +211,65 @@ uint8_t Task1_QRPlan(uint8_t qr_code, const char *colors_left_to_right, uint8_t 
     if ((qr_code < 1U) || (qr_code > TASK1_QR_MAX)) {
         return TASK_PLAN_ERR_QR;
     }
-    if ((plan == NULL) || (colors_left_to_right == NULL)) {
-        return TASK_PLAN_ERR_INPUT;
-    }
-    if (task1_parse_colors(colors_left_to_right, observed) != 0U) {
+    if ((observed == NULL) || (plan == NULL)) {
         return TASK_PLAN_ERR_INPUT;
     }
 
     scheme = task1_scheme[qr_code - 1U];
     for (i = 0U; i < 5U; i++) {
+        plan[i] = 0U;
         for (j = 0U; j < 5U; j++) {
             if (observed[j] == scheme[i]) {
                 plan[i] = (uint8_t)(j + 1U);   /* 槽位号 1~5 */
                 break;
             }
         }
+        if (plan[i] == 0U) {
+            return TASK_PLAN_ERR_INPUT;   /* 方案要求的颜色不在现场槽位里 */
+        }
     }
     return TASK_PLAN_OK;
+}
+
+uint8_t Task1_QRPlan(uint8_t qr_code, const char *colors_left_to_right, uint8_t plan[5])
+{
+    uint8_t observed[5];
+
+    if ((plan == NULL) || (colors_left_to_right == NULL)) {
+        return TASK_PLAN_ERR_INPUT;
+    }
+    if (task1_parse_colors(colors_left_to_right, observed) != 0U) {
+        return TASK_PLAN_ERR_INPUT;
+    }
+    return task1_build_plan(qr_code, observed, plan);
+}
+
+/* 便捷版: 直接输入每个槽位(1~5, 从左到右)的颜色编号数组，计算搬运(抓取)方案
+ * 颜色编号: 0=黑(B) 1=白(W) 2=红(R) 3=绿(G) 4=蓝(U)
+ * slot_colors[i] = 槽位 i+1 的颜色编号 (i=0~4 对应从左到右)
+ * 输出 plan[5] 与 Task1_QRPlan 相同: plan[i] = 第 i 步去几号槽抓
+ * 返回: TASK_PLAN_OK / TASK_PLAN_ERR_QR / TASK_PLAN_ERR_INPUT
+ */
+uint8_t Task1_QRPlanBySlotColors(uint8_t qr_code, const uint8_t slot_colors[5], uint8_t plan[5])
+{
+    uint8_t seen = 0U;
+    uint8_t i;
+    uint8_t c;
+
+    if (slot_colors == NULL) {
+        return TASK_PLAN_ERR_INPUT;
+    }
+    for (i = 0U; i < 5U; i++) {
+        c = slot_colors[i];
+        if (c >= 5U) {
+            return TASK_PLAN_ERR_INPUT;   /* 颜色编号越界 */
+        }
+        if ((seen & (uint8_t)(1U << c)) != 0U) {
+            return TASK_PLAN_ERR_INPUT;   /* 颜色重复 */
+        }
+        seen |= (uint8_t)(1U << c);
+    }
+    return task1_build_plan(qr_code, slot_colors, plan);
 }
 
 uint8_t Task2_QRPlan(uint8_t qr_code, const char *abc_right_to_left, uint8_t plan[3])
@@ -255,6 +301,14 @@ uint8_t Task2_QRPlan(uint8_t qr_code, const char *abc_right_to_left, uint8_t pla
     return TASK_PLAN_OK;
 }
 
+uint8_t Task2_GetSchemeTrophy(uint8_t qr_code, uint8_t step)
+{
+    if ((qr_code < 1U) || (qr_code > TASK2_QR_MAX) || (step >= 3U)) {
+        return 0xFFU;
+    }
+    return task2_scheme[qr_code - 1U][step];
+}
+
 uint8_t Task_BuildPlan(uint8_t qr_task1, const char *colors_left_to_right,
                        uint8_t qr_task2, const char *abc_right_to_left,
                        uint8_t plan1[5], uint8_t plan2[3])
@@ -279,47 +333,47 @@ void Task_PrintPlan(uint8_t qr_task1, const char *colors_left_to_right,
     uint8_t i;
     uint8_t c;
 
-    uart_printf("\r\n======== 搬运方案 ========\r\n");
+    uart_printf("\r\n======== TRANSPORT PLAN ========\r\n");
 
     if (Task1_QRPlan(qr_task1, colors_left_to_right, plan1) == TASK_PLAN_OK) {
-        uart_printf("任务1: 二维码=%u  摆放(左->右)=%s\r\n", qr_task1, colors_left_to_right);
-        uart_printf("  方案(搬运顺序):");
+        uart_printf("Task1: QR=%u  layout(left->right)=%s\r\n", qr_task1, colors_left_to_right);
+        uart_printf("  scheme(transport order):");
         for (i = 0U; i < 5U; i++) {
             uart_printf(" %c", task1_color_letter[task1_scheme[qr_task1 - 1U][i]]);
         }
         uart_printf("\r\n");
-        uart_printf("  抓取槽位顺序:");
+        uart_printf("  grab slot order:");
         for (i = 0U; i < 5U; i++) {
             c = task1_scheme[qr_task1 - 1U][i];
-            uart_printf(" 槽%u(%c)", plan1[i], task1_color_letter[c]);
+            uart_printf("  slot%u(%c)", plan1[i], task1_color_letter[c]);
             if (i < 4U) {
                 uart_printf(" ->");
             }
         }
         uart_printf("\r\n");
     } else {
-        uart_printf("任务1: 输入错误(二维码=%u 摆放=%s)\r\n",
+        uart_printf("Task1: input error(QR=%u layout=%s)\r\n",
                     qr_task1, (colors_left_to_right != NULL) ? colors_left_to_right : "NULL");
     }
 
     if (Task2_QRPlan(qr_task2, abc_right_to_left, plan2) == TASK_PLAN_OK) {
-        uart_printf("任务2: 二维码=%u  摆放(右->左)=%s\r\n", qr_task2, abc_right_to_left);
-        uart_printf("  方案(搬运顺序):");
+        uart_printf("Task2: QR=%u  layout(right->left)=%s\r\n", qr_task2, abc_right_to_left);
+        uart_printf("  scheme(transport order):");
         for (i = 0U; i < 3U; i++) {
             uart_printf(" %c", (char)('A' + task2_scheme[qr_task2 - 1U][i]));
         }
         uart_printf("\r\n");
-        uart_printf("  抓取槽位顺序:");
+        uart_printf("  grab slot order:");
         for (i = 0U; i < 3U; i++) {
             c = task2_scheme[qr_task2 - 1U][i];
-            uart_printf(" 槽%u(%c->%s)", plan2[i], (char)('A' + c), task2_target_cn[c]);
+            uart_printf("  slot%u(%c->%s)", plan2[i], (char)('A' + c), task2_target_en[c]);
             if (i < 2U) {
                 uart_printf(" ->");
             }
         }
         uart_printf("\r\n");
     } else {
-        uart_printf("任务2: 输入错误(二维码=%u 摆放=%s)\r\n",
+        uart_printf("Task2: input error(QR=%u layout=%s)\r\n",
                     qr_task2, (abc_right_to_left != NULL) ? abc_right_to_left : "NULL");
     }
 
