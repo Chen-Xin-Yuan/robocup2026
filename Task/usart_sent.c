@@ -1,5 +1,6 @@
 ﻿#include "usart_sent.h"
 #include "usart.h"
+#include "Chassis.h"
 
 #include <stdio.h>
 #include <stdarg.h>
@@ -41,9 +42,7 @@ void uart_printf(const char *format, ...)
  *                 "SCAN2\n"  扫描任务2二维码
  *                 "ALIGN\n"  对准十字
  *                 "GO\n"     提示任务开始
- *   K210→下位机 : "N<数字>\n"   二维码数字（如 N12）
- *                 "CROSS_OK\n" 十字对准完成（简单模式）
- *                 "CROSS:<x>,<y>,<yaw>\n"  十字对准数据（连续回传）
+ *   K210→下位机 : "CROSS:<x>,<y>,<yaw>\n"  十字对准数据（连续回传）
  *                   x  : 十字中心横向偏差 (cm)，右为正
  *                   y  : 十字中心距离偏差 (cm)，前为正
  *                   yaw: 十字角度偏差 (deg)，逆时针为正
@@ -53,8 +52,6 @@ void uart_printf(const char *format, ...)
 
 static uint8_t k210_rx_buf[K210_RX_BUF_SIZE];
 static uint8_t k210_rx_len = 0U;
-static volatile int16_t k210_qr_number = -1;
-static volatile uint8_t k210_cross_ok = 0U;
 
 /* 十字对准数据（由 "CROSS:x,y,yaw\n" 解析） */
 typedef struct
@@ -82,11 +79,7 @@ static void K210_RxByte(uint8_t byte)
     if ((byte == '\n') || (byte == '\r')) {
         if (k210_rx_len > 0U) {
             k210_rx_buf[k210_rx_len] = '\0';
-            if ((k210_rx_buf[0] == 'N') || (k210_rx_buf[0] == 'n')) {
-                k210_qr_number = (int16_t)atoi((const char *)&k210_rx_buf[1]);
-            } else if (strncmp((const char *)k210_rx_buf, "CROSS_OK", 8U) == 0) {
-                k210_cross_ok = 1U;
-            } else if (strncmp((const char *)k210_rx_buf, "CROSS:", 6U) == 0) {
+            if (strncmp((const char *)k210_rx_buf, "CROSS:", 6U) == 0) {
                 float x_cm;
                 float y_cm;
                 float yaw_deg;
@@ -118,38 +111,6 @@ void K210_Poll(void)
     }
 }
 
-/* 死等K210返回二维码数字，超时返回 -1 */
-int K210_WaitNumber(uint32_t timeout_ms)
-{
-    uint32_t start_tick = HAL_GetTick();
-
-    k210_qr_number = -1;
-    while ((int32_t)(HAL_GetTick() - start_tick) < (int32_t)timeout_ms) {
-        K210_Poll();
-        if (k210_qr_number >= 0) {
-            return (int)k210_qr_number;
-        }
-        HAL_Delay(10U);
-    }
-    return -1;
-}
-
-/* 死等K210十字对准完成，超时返回 0 */
-uint8_t K210_WaitCrossOK(uint32_t timeout_ms)
-{
-    uint32_t start_tick = HAL_GetTick();
-
-    k210_cross_ok = 0U;
-    while ((int32_t)(HAL_GetTick() - start_tick) < (int32_t)timeout_ms) {
-        K210_Poll();
-        if (k210_cross_ok != 0U) {
-            return 1U;
-        }
-        HAL_Delay(10U);
-    }
-    return 0U;
-}
-
 /* ==================== K210 十字对准数据接口 ==================== */
 
 /* 读取K210十字对准数据；有新数据返回1并清零新帧标志，数值始终写入最新值 */
@@ -170,12 +131,6 @@ uint8_t K210_GetCrossData(float *x_cm, float *y_cm, float *yaw_deg)
     return fresh;
 }
 
-/* 是否收到过有效CROSS数据（用于判断K210十字识别是否正常工作） */
-uint8_t K210_CrossValid(void)
-{
-    return k210_cross.valid;
-}
-
 /* 清空十字数据（进入对准流程前调用） */
 void K210_ClearCross(void)
 {
@@ -194,13 +149,22 @@ void K210_ClearCross(void)
  *                   顺序 = 槽位1~5 从左到右
  *     二维码帧:     AA 04 <编号:1B> 0A                (类型码04, 1字节数据)
  *                   编号: 任务1=1~16, 任务2=1~6
+ *     字母帧:       AA 06 <字母:1B> 0A                (类型码06, 1字节数据)
+ *                   字母: 01=a 02=b 03=c, 或 ASCII a/A/b/B/c/C(不区分大小写)
+ *                   顺序 = 任务2 奖杯/槽位 1~3 依次回传, 共3个
  *     完毕帧:       AA 00 0A                          (对十字/对圆心 结束)
+ *     报错帧:       AA 0F 0A                          (任意时刻收到立即停车)
  *
  *   车->上位机(发送, 请求回传):
- *     AA 01 0A   请求对十字纠正 (x/y/yaw)
- *     AA 02 0A   请求对圆心纠正 (x/y)
- *     AA 03 0A   请求颜色识别 (上位机回5个颜色帧后结束)
+ *     AA 01 0A   请求对十字纠正 (x/y/yaw)。每次阻塞式调整结束后再发一次，
+ *                上位机每收到一次回传一帧纠正量，直到收到完毕帧 AA 00 0A。
+ *     AA 02 0A   请求对圆心纠正 (x/y)。同上，每次阻塞式调整结束后再发一次。
+ *     AA 03 0A   请求颜色识别(单槽位)。车收到 1 个颜色后旋转舵机到下一槽位，
+ *                舵机到位(固定延时)后再发一次；上位机每收到一次只回传 1 个颜色帧，共 5 次。
  *     AA 05 0A   请求二维码 (上位机回1个二维码帧)
+ *     AA 06 0A   请求字母识别(任务2, 单槽位)。车收到 1 个字母后旋转舵机到下一槽位，
+ *                舵机到位(固定延时)后再发一次；上位机每收到一次只回传 1 个字母帧，共 3 次。
+ *                注: 请求/回传都用 06，与二维码帧 04 区分开。
  *
  *   - x/y/yaw 为小端 float
  *   - x: 横向偏差(cm,右正)  y: 距离偏差(cm,前正)  yaw: 角度偏差(deg,逆时针正)
@@ -213,8 +177,14 @@ void K210_ClearCross(void)
 #define QR_FRAME_LEN             4U      /* 二维码帧类型码(数据长度见 QR_DATA_LEN) */
 #define QR_DATA_LEN              1U      /* 二维码帧数据长度: 1 个编号 */
 #define USART2_FRAME_DONE_LEN    0x00U   /* 完毕帧长度 */
+#define USART2_FRAME_STOP_LEN    0x0FU   /* 报错帧长度(类型码): AA 0F 0A，收到立即停车 */
 
 #define COLOR_MAX                5U      /* 颜色识别: 收满5个不同颜色即结束 */
+#define COLOR_SERVO_SETTLE_MS    400U   /* 舵机旋转命令发出后等其到位的固定时间(ms)，与 Servo_motor.h 的 SERVO_BUS_MOVE_TIME_MS 一致 */
+#define LETTER_MAX               3U      /* 字母识别: 收满3个字母(a/b/c)即结束 */
+#define LETTER_SERVO_SETTLE_MS   200U   /* 收到字母->转舵机后等其到位的固定延时(ms)，到点后请求下一个字母 */
+#define LETTER_FRAME_LEN         6U      /* 字母回传帧类型码: AA 06 <字母:1B> 0A */
+#define LETTER_DATA_LEN          1U      /* 字母回传帧数据长度: 1 个字母 */
 
 static uint8_t usart2_frame_buf[CROSS_FRAME_LEN];   /* 最大帧数据长度 12 */
 static uint8_t usart2_frame_type = 0U;  /* 当前帧类型(长度字节): 0C十字 08圆心 01颜色 04二维码 00完毕 */
@@ -242,6 +212,21 @@ uint8_t circle_flag = 0U;
 static uint8_t usart2_colors[COLOR_MAX];      /* 收到的颜色编号 0~4 */
 static volatile uint8_t usart2_color_count = 0U;
 static volatile uint8_t usart2_color_done = 0U;
+
+/* 颜色识别改为逐槽位请求：舵机每转到一个位置，等固定延时后请求 1 个颜色 */
+static volatile uint8_t  color_req_pending = 0U;   /* 舵机正在旋转，等待到位后发请求 */
+static volatile uint32_t color_req_tick = 0U;      /* 最近一次舵机旋转命令发出时刻(ms) */
+static volatile uint8_t  color_rx_fresh = 0U;      /* 新收到 1 个颜色，等待主循环转舵机 */
+
+/* ---- 字母识别缓存 ---- */
+static uint8_t usart2_letters[LETTER_MAX];     /* 收到的字母编号 0=a 1=b 2=c */
+static volatile uint8_t usart2_letter_count = 0U;
+static volatile uint8_t usart2_letter_done = 0U;
+
+/* 字母识别逐槽位请求：舵机每转到一个位置，等固定延时后请求 1 个字母 */
+static volatile uint8_t  letter_req_pending = 0U;   /* 舵机正在旋转，等待到位后发请求 */
+static volatile uint32_t letter_req_tick = 0U;      /* 最近一次舵机旋转命令发出时刻(ms) */
+static volatile uint8_t  letter_rx_fresh = 0U;      /* 新收到 1 个字母，等待主循环转舵机 */
 
 /* ---- 二维码缓存 ---- */
 static volatile uint8_t usart2_qr_number = 0U;
@@ -354,8 +339,52 @@ static void usart2_color_add(uint8_t ch)
     }
     usart2_colors[usart2_color_count] = c;
     usart2_color_count++;
+    color_rx_fresh = 1U;   /* 新收到 1 个颜色：主循环据此转舵机到下一槽位 */
     if (usart2_color_count >= COLOR_MAX) {
         usart2_color_done = 1U;   /* 收满5个不同颜色，识别结束 */
+    }
+}
+
+/* ==================== 字母识别缓存与解析 ==================== */
+
+/* 把字母字节解析为字母编号(0=a 1=b 2=c)；非法返回 0xFF */
+static uint8_t usart2_letter_parse(uint8_t ch)
+{
+    if ((ch >= 1U) && (ch <= 3U)) {
+        return (uint8_t)(ch - 1U);   /* 01/02/03 -> a/b/c */
+    }
+    switch (ch) {
+        case 'a': case 'A': return 0U;   /* a */
+        case 'b': case 'B': return 1U;   /* b */
+        case 'c': case 'C': return 2U;   /* c */
+        default: return 0xFFU;
+    }
+}
+
+/* 收一个字母(中断内调用)：重复自动丢弃，收满3个不同字母置 done */
+static void usart2_letter_add(uint8_t ch)
+{
+    uint8_t c;
+    uint8_t i;
+
+    if (usart2_letter_done != 0U) {
+        return;   /* 已收满3个字母，忽略后续 */
+    }
+    c = usart2_letter_parse(ch);
+    if (c >= 3U) {
+        return;   /* 非法字母，忽略 */
+    }
+    /* 重复字母：自动丢弃后一个(不计入)，继续检测直到凑齐3个不同字母 */
+    for (i = 0U; i < (uint8_t)usart2_letter_count; i++) {
+        if (usart2_letters[i] == c) {
+            return;
+        }
+    }
+    usart2_letters[usart2_letter_count] = c;
+    usart2_letter_count++;
+    letter_rx_fresh = 1U;   /* 新收到 1 个字母：主循环据此转舵机到下一槽位 */
+    if (usart2_letter_count >= LETTER_MAX) {
+        usart2_letter_done = 1U;   /* 收满3个字母，识别结束 */
     }
 }
 
@@ -389,14 +418,138 @@ void Color_Reset(void)
     __disable_irq();
     usart2_color_count = 0U;
     usart2_color_done = 0U;
+    color_req_pending = 0U;
+    color_req_tick = 0U;
+    color_rx_fresh = 0U;
     __set_PRIMASK(primask);
 }
 
-/* 请求上位机开始颜色识别（发送 AA 03 0A，走发送队列不丢帧） */
+/* 请求上位机回传 1 个颜色（发送 AA 03 0A，走发送队列不丢帧）。
+ * 首次由主循环进入 state21 时调用，之后由 Color_Process 在舵机到位后调用。 */
 void Color_SendRequest(void)
 {
     static const uint8_t frame[3] = {USART2_FRAME_HEAD, 0x03U, USART2_FRAME_TAIL};
     usart2_tx_queue(frame, 3U);
+}
+
+/* 是否有新收到的颜色（1=有，读取后清除）。主循环据此旋转舵机到下一槽位 */
+uint8_t Color_TakeNew(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    uint8_t fresh;
+
+    __disable_irq();
+    fresh = color_rx_fresh;
+    color_rx_fresh = 0U;
+    __set_PRIMASK(primask);
+    return fresh;
+}
+
+/* 主循环发出舵机旋转命令后调用：记录时刻，开始等待舵机到位 */
+void Color_StartServoRotate(void)
+{
+    color_req_tick = HAL_GetTick();
+    color_req_pending = 1U;
+}
+
+/* 主循环里周期调用：舵机到位（固定延时 COLOR_SERVO_SETTLE_MS）后，
+ * 向上位机请求下一个槽位颜色（AA 03 0A）。每收到 1 个颜色转一次舵机、
+ * 舵机到位后请求一次；已收满 5 个不同颜色后不再请求。 */
+void Color_Process(void)
+{
+    if (color_req_pending == 0U) {
+        return;
+    }
+    if ((int32_t)(HAL_GetTick() - color_req_tick) < (int32_t)COLOR_SERVO_SETTLE_MS) {
+        return;   /* 舵机还没到位 */
+    }
+    color_req_pending = 0U;
+    if (Color_IsDone() != 0U) {
+        return;   /* 已收满 5 个颜色，不再请求 */
+    }
+    Color_SendRequest();   /* 请求下一个槽位颜色 */
+}
+
+/* ==================== 字母识别接口 ==================== */
+
+/* 当前已收到字母个数(0~3) */
+uint8_t Letter_GetCount(void)
+{
+    return (uint8_t)usart2_letter_count;
+}
+
+/* 取第 i 个字母编号(0=a 1=b 2=c)；越界返回 0xFF */
+uint8_t Letter_GetLetter(uint8_t i)
+{
+    if (i >= (uint8_t)usart2_letter_count) {
+        return 0xFFU;
+    }
+    return usart2_letters[i];
+}
+
+/* 是否已收满3个字母(识别结束) */
+uint8_t Letter_IsDone(void)
+{
+    return (uint8_t)usart2_letter_done;
+}
+
+/* 清空字母缓存，开始新一轮识别 */
+void Letter_Reset(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    __disable_irq();
+    usart2_letter_count = 0U;
+    usart2_letter_done = 0U;
+    letter_req_pending = 0U;
+    letter_req_tick = 0U;
+    letter_rx_fresh = 0U;
+    __set_PRIMASK(primask);
+}
+
+/* 请求上位机回传 1 个字母（发送 AA 06 0A，走发送队列不丢帧）。
+ * 首次由主循环进入任务2循迹阶段时调用，之后由 Letter_Process 在舵机到位后调用。 */
+void Letter_SendRequest(void)
+{
+    static const uint8_t frame[3] = {USART2_FRAME_HEAD, 0x06U, USART2_FRAME_TAIL};
+    usart2_tx_queue(frame, 3U);
+}
+
+/* 是否有新收到的字母（1=有，读取后清除）。主循环据此旋转舵机到下一槽位 */
+uint8_t Letter_TakeNew(void)
+{
+    uint32_t primask = __get_PRIMASK();
+    uint8_t fresh;
+
+    __disable_irq();
+    fresh = letter_rx_fresh;
+    letter_rx_fresh = 0U;
+    __set_PRIMASK(primask);
+    return fresh;
+}
+
+/* 主循环发出舵机旋转命令后调用：记录时刻，开始等待舵机到位 */
+void Letter_StartServoRotate(void)
+{
+    letter_req_tick = HAL_GetTick();
+    letter_req_pending = 1U;
+}
+
+/* 主循环里周期调用：舵机到位（固定延时 LETTER_SERVO_SETTLE_MS）后，
+ * 向上位机请求下一个字母（AA 06 0A）。每收到 1 个字母转一次舵机、
+ * 舵机到位后请求一次；已收满 3 个字母后不再请求。 */
+void Letter_Process(void)
+{
+    if (letter_req_pending == 0U) {
+        return;
+    }
+    if ((int32_t)(HAL_GetTick() - letter_req_tick) < (int32_t)LETTER_SERVO_SETTLE_MS) {
+        return;   /* 舵机还没到位 */
+    }
+    letter_req_pending = 0U;
+    if (Letter_IsDone() != 0U) {
+        return;   /* 已收满 3 个字母，不再请求 */
+    }
+    Letter_SendRequest();   /* 请求下一个字母 */
 }
 
 /* ==================== 二维码接口 ==================== */
@@ -552,7 +705,7 @@ void Usart2_OnByte(uint8_t ch)
                 usart2_frame_state = 1U;
             }
             break;
-        case 1U:   /* 等长度(类型): 0C=对十字 08=对圆心 01=颜色 04=二维码 00=完毕 */
+        case 1U:   /* 等长度(类型): 0C=对十字 08=对圆心 01=颜色 04=二维码 06=字母 00=完毕 0F=报错停车 */
             usart2_frame_type = 0U;
             usart2_data_len = 0U;
             usart2_frame_idx = 0U;
@@ -572,8 +725,14 @@ void Usart2_OnByte(uint8_t ch)
                 usart2_frame_type = QR_FRAME_LEN;
                 usart2_data_len = QR_DATA_LEN;
                 usart2_frame_state = 2U;
+            } else if (ch == LETTER_FRAME_LEN) {
+                usart2_frame_type = LETTER_FRAME_LEN;
+                usart2_data_len = LETTER_DATA_LEN;
+                usart2_frame_state = 2U;
             } else if (ch == USART2_FRAME_DONE_LEN) {
                 usart2_frame_state = 4U;   /* 完毕帧 */
+            } else if (ch == USART2_FRAME_STOP_LEN) {
+                usart2_frame_state = 5U;   /* 报错帧: 等帧尾 0A -> 立即停车 */
             } else if (ch == USART2_FRAME_HEAD) {
                 usart2_frame_state = 1U;   /* 连续 AA：当作新的帧头，重新等长度 */
             } else {
@@ -605,6 +764,8 @@ void Usart2_OnByte(uint8_t ch)
                     usart2_color_add(usart2_frame_buf[0]);   /* 收一个颜色 */
                 } else if (usart2_frame_type == QR_FRAME_LEN) {
                     usart2_qr_add(usart2_frame_buf[0]);      /* 收二维码编号 */
+                } else if (usart2_frame_type == LETTER_FRAME_LEN) {
+                    usart2_letter_add(usart2_frame_buf[0]);  /* 收一个字母 */
                 }
             }
             usart2_frame_state = 0U;
@@ -613,6 +774,12 @@ void Usart2_OnByte(uint8_t ch)
             if (ch == USART2_FRAME_TAIL) {
                 cross_flag = 0U;    /* 对十字结束 */
                 circle_flag = 0U;   /* 对圆心结束 */
+            }
+            usart2_frame_state = 0U;
+            break;
+        case 5U:   /* 报错帧: 等帧尾 0A -> 无论何时收到都立即停车 */
+            if (ch == USART2_FRAME_TAIL) {
+                Chassis_stop();   /* 上位机报错帧 AA 0F 0A */
             }
             usart2_frame_state = 0U;
             break;

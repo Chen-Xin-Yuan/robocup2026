@@ -62,6 +62,10 @@ void ICM_getValues(void);
 void ICM_getEulerianAngles(void);
 void Kalman_ResetEulerZero(void);
 
+/*================== IMU偏航角偏置接口 ==================*/
+void Kalman_SetYawDeg(float target_deg);   // 强制把当前yaw偏置到 target_deg（度）
+void Kalman_SetYawRad(float target_rad);   // 强制把当前yaw偏置到 target_rad（弧度）
+
 /*================== IMU融合对外接口 ==================*/
 float Kalman_GetYawRad(void);       // 获取IMU偏航角 (rad, 连续无跳变)
 float Kalman_GetYawOmegaRad(void);  // 获取IMU Z轴角速度 (rad/s, 零偏已补偿)

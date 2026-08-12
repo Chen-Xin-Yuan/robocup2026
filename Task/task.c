@@ -6,27 +6,40 @@
 
 float task1_move_distance_X_m[5] = 
 {
-    -0.60f,
-    -0.20f,
-    -0.60f,
-    -0.11f,
-    -0.50f
+    -0.40f,
+    0.12f,
+    0.58f,
+    0.01f,
+    0.45f
 };
 float task1_move_distance_Y_m[5] = 
 {
+    0.42f,
+    0.38f,
+    -0.22f,
+    0.19f,
+    -0.02f
+};
+
+float task2_move_distance_X_m[3] = 
+{
+    -0.15f,
+    -0.42f,
+    -0.22f
+};
+float task2_move_distance_Y_m[3] = 
+{
+    0.0f,
     -0.58f,
-    -0.30f,
-    0.30f,
-    -0.53f,
-    0.08f
+    0.0f
 };
 
 bool is_align[5]=
 {
-    true,
     false,
     false,
-    true,
+    false,
+    false,
     false
 };
 

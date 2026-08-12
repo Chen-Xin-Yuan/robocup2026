@@ -295,3 +295,41 @@ float Kalman_GetYawOmegaRad(void)
 {
     return icm_data.gyro_z;
 }
+
+/**
+ * @brief  强制偏置航向角（度）
+ * @param  target_deg 要强制偏置到的目标角度 (deg)
+ * @note   调用后 Kalman_GetYawRad() / angle_Z 立即返回 target_deg 对应的弧度，
+ *         之后在该角度基础上继续累加转动量（连续、无跳变），
+ *         即“把当前航向设定为 target_deg”。
+ *         该偏置作用于IMU全局航向，Nav_Odom.Theta 等读取处也会同步生效。
+ *         若只想在控制层（Control_GetYawDeg）做局部纠正，可用 Control_CorrectYawDeg()。
+ */
+void Kalman_SetYawDeg(float target_deg)
+{
+    float target;
+
+    if (euler_zero_inited == 0U) {
+        return;   /* 姿态零偏尚未建立，忽略本次偏置 */
+    }
+
+    target = angle_norm_180(target_deg);
+
+    /* 调整零点，使 euler_raw_yaw - euler_yaw_zero == target */
+    euler_yaw_zero = euler_raw_yaw - target;
+
+    /* 立即更新当前航向 */
+    angle_Z = target;
+    eulerAngle.yaw = target;
+    /* 注意：不要改动 eulerAngle.last_yaw / Dirchange，
+       它们跟踪的是原始（未偏置）角度跨±180°的方向，与偏置无关 */
+}
+
+/**
+ * @brief  强制偏置航向角（弧度版）
+ * @param  target_rad 要强制偏置到的目标角度 (rad)
+ */
+void Kalman_SetYawRad(float target_rad)
+{
+    Kalman_SetYawDeg(target_rad * 180.0f / GNSS_PI);
+}
