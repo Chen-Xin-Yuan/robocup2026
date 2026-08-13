@@ -6,7 +6,7 @@
 
 #define SERVO_POSITION_MIN            500U
 #define SERVO_POSITION_MAX           2500U
-#define SERVO_PWM_ANGLE_MAX_DEG        98U
+#define SERVO_PWM_ANGLE_MAX_DEG        120U
 #define SERVO_PWM_FULL_RANGE_DEG      180U
 #define SERVO_BUS_ANGLE_MAX_DEG       360U
 #define SERVO_BUS_MOVE_TIME_MS       1000U
@@ -15,12 +15,12 @@
 #define SERVO_COMMAND_MAX_LEN          24U
 #define SERVO_TX_QUEUE_DEPTH           4U
 
-#define SERVO_BUS_1          67U
+#define SERVO_BUS_1          48U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
 #define SERVO_BUS_5          SERVO_BUS_4+72
-#define SERVO_BUS_LOCK       SERVO_BUS_4+36
+#define SERVO_BUS_LOCK       SERVO_BUS_2+36
 
 uint16_t Servo_angle[6]={SERVO_BUS_1,SERVO_BUS_2,SERVO_BUS_3,SERVO_BUS_4,SERVO_BUS_5,SERVO_BUS_LOCK};
 
@@ -210,7 +210,18 @@ void ServoBus_SetAngle(uint16_t angle_deg)
 
 void Servo_Init(void)
 {
+    #ifdef start_from_home
     Servo_SetAngle(0U);
+    #endif
+
+    #ifdef start_from_task1
+    Servo_SetAngle(94U);
+    #endif
+
+    #ifdef start_from_task2
+    Servo_SetAngle(94U);
+    #endif
+
     (void)HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);
 
     /* 等待舵机上电稳定后再发第一条指令，否则 ID 设置可能被忽略。 */
@@ -226,8 +237,6 @@ void Servo_Init(void)
 
 void ServoBus_Test(void)
 {
-
-
     ServoBus_SetAngle(SERVO_BUS_1);
     HAL_Delay(2000U);
     ServoBus_SetAngle(SERVO_BUS_2);

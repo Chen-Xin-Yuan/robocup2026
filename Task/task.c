@@ -6,35 +6,35 @@
 
 float task1_move_distance_X_m[5] = 
 {
-    -0.40f,
-    0.12f,
-    0.58f,
-    0.01f,
-    0.45f
+    -0.018f,
+    0.0f,
+    0.81f,
+    -0.12f,
+    0.65f
 };
 float task1_move_distance_Y_m[5] = 
 {
-    0.42f,
-    0.38f,
-    -0.22f,
-    0.19f,
-    -0.02f
+    0.43f,
+    0.35f,
+    0.10f,
+    -0.24f,
+    0.25f
 };
 
 float task2_move_distance_X_m[3] = 
 {
     -0.15f,
-    -0.42f,
-    -0.22f
+    0.65f,
+    0.30f
 };
 float task2_move_distance_Y_m[3] = 
 {
     0.0f,
-    -0.58f,
+    0.0f,
     0.0f
 };
 
-bool is_align[5]=
+bool task1_is_align[5]=
 {
     false,
     false,
@@ -43,7 +43,12 @@ bool is_align[5]=
     false
 };
 
-
+bool task2_is_align[3]=
+{
+    false,
+    false,
+    false
+};
 /* ==================== 方案表（来源于规则附录） ==================== */
 
 /* 任务1 二维码对应搬运方案表(附录A): 每一行 = 该二维码编号对应的搬运顺序
@@ -241,6 +246,12 @@ static uint8_t task1_build_plan(uint8_t qr_code, const uint8_t observed[5], uint
             return TASK_PLAN_ERR_INPUT;   /* 方案要求的颜色不在现场槽位里 */
         }
     }
+        /* 现场调整：第3个与第4个物块的放置顺序对调（先放第4个，再放第3个） */
+        {
+            uint8_t swap_tmp = plan[2];
+            plan[2] = plan[3];
+            plan[3] = swap_tmp;
+        }
     return TASK_PLAN_OK;
 }
 

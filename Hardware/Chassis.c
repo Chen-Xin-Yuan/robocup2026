@@ -239,7 +239,7 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     set_speed_pos_target(&Motor3, s3 / t, s3);
     set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
-    return (t * 1000.0f);
+    return ((t + 0.1) * 1000.0f);
 }
 
 /*================== 状态查询 ==================*/

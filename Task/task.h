@@ -82,9 +82,12 @@ void Task_PrintPlan(uint8_t qr_task1, const char *colors_left_to_right,
 void Task_TestPlan(void);
 
 /* ===== 任务1: 依次走5个点的固定移动距离（定义在 task.c，供状态机使用） ===== */
-extern float task1_move_distance_X_m[5];   /* x 移动距离 (m) */
-extern float task1_move_distance_Y_m[5];   /* y 移动距离 (m) */
-extern bool is_align[5];                   /* true=对十字, false=对圆心 */
+extern float task1_move_distance_X_m[5];
+extern float task1_move_distance_Y_m[5];
+extern float task2_move_distance_X_m[3];
+extern float task2_move_distance_Y_m[3];
+extern bool task1_is_align[5];                   /* true=对十字, false=对圆心 */
+extern bool task2_is_align[3];                   /* true=对十字, false=对圆心 */
 
 #ifdef __cplusplus
 }

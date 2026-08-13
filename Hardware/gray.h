@@ -9,8 +9,8 @@
 extern "C" {
 #endif
 
-#define GRAY_SENSOR_NUM 8U
-#define GRAY_PID_PERIOD_MS       40U
+#define GRAY_SENSOR_NUM          8U
+#define GRAY_PID_PERIOD_MS       18U
 /*
  * 灰度循迹状态。PID 的参数及积分、微分历史统一由 PID_t 管理，
  * 此结构体只保留传感器数据和循迹层状态。
