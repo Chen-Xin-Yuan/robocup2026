@@ -6,11 +6,11 @@
 
 //控制宏
 // #define debug  
-// #define start_from_home
-#define start_from_task1
+#define start_from_home
+// #define start_from_task1
 // #define start_from_task2
 
-extern uint16_t Servo_angle[6];
+extern uint16_t Servo_angle[7];
 
 /* 同时初始化普通 PWM 舵机和 USART3 总线舵机。 */
 void Servo_Init(void);

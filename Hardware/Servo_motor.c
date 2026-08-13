@@ -14,15 +14,16 @@
 #define SERVO_POWER_ON_DELAY_MS      300U
 #define SERVO_COMMAND_MAX_LEN          24U
 #define SERVO_TX_QUEUE_DEPTH           4U
-
-#define SERVO_BUS_1          48U
+//67 48 25
+#define SERVO_BUS_1          25U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
 #define SERVO_BUS_5          SERVO_BUS_4+72
-#define SERVO_BUS_LOCK       SERVO_BUS_2+36
+#define SERVO_BUS_TASK1_LOCK       SERVO_BUS_3+36
+#define SERVO_BUS_TASK2_LOCK       SERVO_BUS_2+36
 
-uint16_t Servo_angle[6]={SERVO_BUS_1,SERVO_BUS_2,SERVO_BUS_3,SERVO_BUS_4,SERVO_BUS_5,SERVO_BUS_LOCK};
+uint16_t Servo_angle[7]={SERVO_BUS_1,SERVO_BUS_2,SERVO_BUS_3,SERVO_BUS_4,SERVO_BUS_5,SERVO_BUS_TASK1_LOCK,SERVO_BUS_TASK2_LOCK};
 
 /* ---------------- DMA 发送队列（非阻塞，可在中断中调用） ---------------- */
 
@@ -231,8 +232,14 @@ void Servo_Init(void)
     if (Servo_SendString("#255PID000!") == HAL_OK) {
         HAL_Delay(SERVO_INIT_DELAY_MS);
     }
-
     ServoBus_SetAngle(SERVO_BUS_1);
+
+    #ifdef start_from_task1
+    HAL_Delay(1000);
+    #endif
+    #ifdef start_from_task2
+    HAL_Delay(1000);
+    #endif
 }
 
 void ServoBus_Test(void)

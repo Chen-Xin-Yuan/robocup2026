@@ -242,6 +242,37 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     return ((t + 0.1) * 1000.0f);
 }
 
+float Chassis_MovePos_Set_V(float sx, float sy, float theta_deg, float V)
+{
+    float theta_rad = theta_deg * CHASSIS_PI / 180.0f;
+    float s_rot = theta_rad * rotate_radius;
+    
+    float temp = wheel_default_speed;
+    wheel_default_speed = V;
+
+    float s1 = sy - sx - s_rot;
+    float s2 = sy + sx + s_rot;
+    float s3 = sy + sx - s_rot;
+    float s4 = sy - sx + s_rot;
+
+    float t1 = fabsf(s1) / wheel_default_speed;
+    float t2 = fabsf(s2) / wheel_default_speed;
+    float t3 = fabsf(s3) / wheel_default_speed;
+    float t4 = fabsf(s4) / wheel_default_speed;
+    float t  = chassis_max_float(4, t1, t2, t3, t4);
+
+    if (t < 0.001f) return 0.0f;
+    if (!chassis_tx_batch_available()) return -1.0f;
+
+    set_speed_pos_target(&Motor1, s1 / t, s1);
+    set_speed_pos_target(&Motor2, s2 / t, s2);
+    set_speed_pos_target(&Motor3, s3 / t, s3);
+    set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
+
+    wheel_default_speed = temp;
+    return ((t + 0.1) * 1000.0f);
+}
+
 /*================== 状态查询 ==================*/
 
 float Chassis_GetLinearSpeed(uint8_t motor_ID)
@@ -367,7 +398,6 @@ uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg)
     do {
         duration_ms = Chassis_MovePos(sx, sy, theta_deg);
         if (duration_ms < 0.0f) {
-            // Chassis_Process();
             HAL_Delay(1U);
         }
     } while (duration_ms < 0.0f);
@@ -378,6 +408,25 @@ uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg)
     }
     return 0U;
 }
+//修改速度的走法
+uint32_t Chassis_MovePosBlocking_Set_V(float sx, float sy, float theta_deg, float v)
+{
+    float duration_ms;
+
+    do {
+        duration_ms = Chassis_MovePos_Set_V(sx, sy, theta_deg, v);
+        if (duration_ms < 0.0f) {
+            HAL_Delay(1U);
+        }
+    } while (duration_ms < 0.0f);
+
+    if (duration_ms > 0.0f) {
+        HAL_Delay((uint32_t)(duration_ms + 0.5f));
+        return (uint32_t)(duration_ms + 0.5f);
+    }
+    return 0U;
+}
+
 
 /**
  * @brief 向左横移，直到灰度中间两个传感器(3,4)同时检测到黑线

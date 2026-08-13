@@ -6,7 +6,7 @@
 
 float task1_move_distance_X_m[5] = 
 {
-    -0.018f,
+    -0.11f,
     0.0f,
     0.81f,
     -0.12f,
@@ -24,7 +24,7 @@ float task1_move_distance_Y_m[5] =
 float task2_move_distance_X_m[3] = 
 {
     -0.15f,
-    0.65f,
+    0.63f,
     0.30f
 };
 float task2_move_distance_Y_m[3] = 
@@ -43,11 +43,11 @@ bool task1_is_align[5]=
     false
 };
 
-bool task2_is_align[3]=
+uint8_t task2_is_align[3]=
 {
-    false,
-    false,
-    false
+    3,
+    3,
+    2
 };
 /* ==================== 方案表（来源于规则附录） ==================== */
 

@@ -98,6 +98,7 @@ void Chassis_Test(void);
 /*================== 状态机辅助函数 ==================*/
 void Chassis_OpenLoopMove(float vx, float vy, float omega, uint32_t duration_ms);
 uint32_t Chassis_MovePosBlocking(float sx, float sy, float theta_deg);
+uint32_t Chassis_MovePosBlocking_Set_V(float sx, float sy, float theta_deg, float v);
 void Chassis_StrafeLeftUntilLine(float speed, uint32_t timeout_ms);
 void Chassis_StrafeRightUntilLine(float speed, uint32_t timeout_ms);
 

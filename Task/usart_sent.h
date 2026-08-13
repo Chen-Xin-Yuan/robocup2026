@@ -69,16 +69,6 @@ void Color_StartServoRotate(void);   /* 主循环发出舵机旋转命令后调�
 void Color_Process(void);            /* 主循环：舵机到位(固定延时)后请求下一个槽位颜色(AA 03 0A) */
 void Color_SendRequest(void);        /* 请求上位机回传 1 个颜色(AA 03 0A) */
 
-/* ==================== 字母识别（USART2，请求/回传帧 AA 06 <01/02/03> 0A） ==================== */
-uint8_t Letter_GetCount(void);        /* 已收到的字母个数 0~3 */
-uint8_t Letter_GetLetter(uint8_t i);  /* 第 i 个字母编号(0=a 1=b 2=c)，越界返回 0xFF */
-uint8_t Letter_IsDone(void);          /* 是否已收满3个字母(识别结束) */
-void Letter_Reset(void);              /* 清空字母缓存，开始新一轮识别 */
-uint8_t Letter_TakeNew(void);         /* 是否有新收到的字母(1=有, 读取后清除)，主循环据此转舵机 */
-void Letter_StartServoRotate(void);   /* 主循环发出舵机旋转命令后调用：开始等待舵机到位 */
-void Letter_Process(void);            /* 主循环：舵机到位(固定延时)后请求下一个字母(AA 06 0A) */
-void Letter_SendRequest(void);        /* 请求上位机回传 1 个字母(AA 06 0A) */
-
 /* ==================== 对圆心（USART2，纠正帧 AA 08 <x:4B> <y:4B> 0A，无 yaw） ==================== */
 uint8_t Circle_GetCorrection(float *x_cm, float *y_cm); /* 1=收到新帧并写入 x/y；0=暂无 */
 void Circle_SendRequest(void);       /* 请求上位机回传圆心 x/y(AA 02 0A) */
