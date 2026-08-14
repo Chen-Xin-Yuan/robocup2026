@@ -951,6 +951,16 @@
               <FileType>5</FileType>
               <FilePath>..\Hardware\gray.h</FilePath>
             </File>
+            <File>
+              <FileName>gw_color_sensor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Hardware\gw_color_sensor.h</FilePath>
+            </File>
+            <File>
+              <FileName>gw_grayscale_sensor.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Hardware\gw_grayscale_sensor.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -1036,6 +1046,26 @@
               <FileType>5</FileType>
               <FilePath>..\Software\hardware_iic.h</FilePath>
             </File>
+            <File>
+              <FileName>delay.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Software\delay.c</FilePath>
+            </File>
+            <File>
+              <FileName>delay.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Software\delay.h</FilePath>
+            </File>
+            <File>
+              <FileName>software_iic.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Software\software_iic.c</FilePath>
+            </File>
+            <File>
+              <FileName>software_iic.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Software\software_iic.h</FilePath>
+            </File>
           </Files>
         </Group>
         <Group>
@@ -1081,7 +1111,17 @@
               <FileType>5</FileType>
               <FilePath>..\Task\task.h</FilePath>
             </File>
-          </Files>
+            <File>
+              <FileName>color_reg.c</FileName>
+              <FileType>1</FileType>
+              <FilePath>..\Task\color_reg.c</FilePath>
+            </File>
+            <File>
+              <FileName>color_reg.h</FileName>
+              <FileType>5</FileType>
+              <FilePath>..\Task\color_reg.h</FilePath>
+            </File>
+</Files>
         </Group>
         <Group>
           <GroupName>::CMSIS</GroupName>

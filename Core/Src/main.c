@@ -324,8 +324,8 @@ int main(void)
             }
 
             /* 2) 再向左移动到灰度中间两个(3,4)同时检测到黑线停止 */
-            Chassis_StrafeLeftUntilLine(0.10f, K210_STRAFE_LINE_MS);
-            Servo_SetAngle(94);
+            Chassis_StrafeLeftUntilLine(0.20f, K210_STRAFE_LINE_MS);
+            Servo_SetAngle(SERVO_TASK1_ANGLE);
             HAL_Delay(1500);
             /* 3) 同时向K210发送消息，提示任务一开始 */
             K210_Send("GO\n");
@@ -490,12 +490,14 @@ int main(void)
           }
 
           case 23://5个点全部走完 -> 进入任务2
-            HAL_Delay(200);
+            HAL_Delay(100);
+            ServoBus_SetAngle(SERVO_TASK2_ANGLE);
+            ServoBus_SetAngle(Servo_angle[0]);
             Control_StaticTurn(-160.0f, 5000U);
-            HAL_Delay(500);
+            HAL_Delay(100);
             Chassis_StrafeLeftUntilLine(-0.30f, K210_STRAFE_LINE_MS);
             Chassis_stop();
-            ServoBus_SetAngle(Servo_angle[0]);
+            
             overall_task_state = 3;   /* 任务1完成 → 任务2 */
             task2_plan_ready = 0U;    /* 任务2计划复位，循迹阶段重新生成 */
             task2_track_stop = 0U;    /* 复位循迹超时停止标志 */
@@ -618,7 +620,7 @@ int main(void)
                                         task2_move_distance_Y_m[task2_point_index],
                                         0.0f);
                 Chassis_MovePosBlocking(0.0f, 0.05f, 0.0f);
-                Servo_SetAngle(94);
+                Servo_SetAngle(SERVO_TASK1_ANGLE);
                 
                 Chassis_stop();
             }
@@ -808,7 +810,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
             (track_sys.sensor_binary[2] == 0U))
         {
             Chassis_stop();
-            Kalman_SetYawDeg(-179.0f);
+            Kalman_SetYawDeg(-179.2f);
             if (task1_plan_ready != 0U) {
                 task1_state = 22;
             }

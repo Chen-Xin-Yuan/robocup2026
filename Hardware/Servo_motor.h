@@ -11,6 +11,9 @@
 // #define start_from_task2
 
 extern uint16_t Servo_angle[7];
+#define SERVO_TASK1_ANGLE 92
+#define SERVO_TASK2_ANGLE 97
+
 
 /* 同时初始化普通 PWM 舵机和 USART3 总线舵机。 */
 void Servo_Init(void);
