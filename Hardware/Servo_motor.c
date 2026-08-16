@@ -15,7 +15,7 @@
 #define SERVO_COMMAND_MAX_LEN          24U
 #define SERVO_TX_QUEUE_DEPTH           4U
 //67 48 25
-#define SERVO_BUS_1          67U
+#define SERVO_BUS_1          28U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
@@ -221,6 +221,14 @@ void Servo_Init(void)
 
     #ifdef start_from_task2
     Servo_SetAngle(SERVO_TASK2_ANGLE);
+    #endif
+
+    #ifdef debug_in_round
+    Servo_SetAngle(SERVO_TASK1_ANGLE);
+    #endif
+
+    #ifdef debug_in_color
+    Servo_SetAngle(SERVO_TASK1_ANGLE);
     #endif
 
     (void)HAL_TIM_PWM_Start(&htim9, TIM_CHANNEL_2);

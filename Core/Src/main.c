@@ -64,7 +64,7 @@
 #define K210_STRAFE_LINE_MS      18000U    /* 向左找黑线超时 */
 /* (对十字/对圆心已去掉超时，改为一直等上位机完毕帧) */
 
-#define TASK2_SERVO_ANGLE       80U
+#define TASK2_SERVO_UP_ANGLE       80U
 
 
 /* USER CODE END PD */
@@ -77,6 +77,11 @@
 /* Private variables ---------------------------------------------------------*/
 
 /* USER CODE BEGIN PV */
+/* state31 收物块舵机状态（TIM2 中断用；进入 state31 生成 plan2 时复位） */
+static uint16_t t2_servo_count = 0U;
+static uint8_t  t2_servo_index = 0U;
+static uint8_t  t2_servo_first_sent = 0U;
+
 #ifdef start_from_home
 uint8_t overall_task_state = 1;
 
@@ -144,7 +149,7 @@ uint8_t QR_scanning_state = 11;
 uint8_t task1_state = 0;
 uint8_t task2_state = 31;
 uint8_t qr_task1_number = 1;
-uint8_t qr_task2_number = 2;
+uint8_t qr_task2_number = 4;
 
 uint8_t home_flag = 0;
 uint8_t gray_flag = 0;
@@ -167,6 +172,70 @@ uint8_t task2_plan_ready = 0U;        /* plan2 是否已生成 */
 uint8_t task2_track_stop = 0U;         /* 1=任务2循迹超时，停止循迹便于排查 */
 #endif
 
+#ifdef debug_in_round
+uint8_t overall_task_state = 2;
+
+uint8_t QR_scanning_state = 11;
+uint8_t task1_state = 22;
+uint8_t task2_state = 0;
+uint8_t qr_task1_number = 1;
+uint8_t qr_task2_number = 4;
+
+uint8_t home_flag = 0;
+uint8_t gray_flag = 0;
+
+float cmd_x, cmd_y, cmd_yaw;   /* 上位机命令: 需要纠正的 x/y/yaw */
+
+uint8_t task1_point_index = 0;   
+uint8_t task2_point_index = 0;   
+
+uint8_t slot_colors[5];          /* 颜色识别结果: 槽1~5(左->右)的颜色编号 0=黑 1=白 2=红 3=绿 4=蓝 */
+uint8_t plan1[5]={
+  1,5,2,4,3
+};                /* 任务1抓取方案: plan1[i] = 第 i 步去几号槽抓(1~5) */
+uint8_t plan2[3];                /* 任务2抓取方案: plan2[i] = 第 i 步去几号槽抓(1~3) */
+char task2_abc_order[4] = {0};   /* 任务2现场奖杯摆放(右->左)，如 "CBA"；需上位机/视觉填入或人工标定 */
+
+/* 任务2 槽位/领奖台坐标(体坐标, m)——按场地标定后填写 */
+
+uint8_t task1_color_started = 1U;     /* 循迹阶段是否已请求颜色识别 */
+uint8_t task1_plan_ready = 1U;        /* plan1 是否已生成 */
+uint8_t task2_plan_ready = 0U;        /* plan2 是否已生成 */
+uint8_t task2_track_stop = 0U;         /* 1=任务2循迹超时，停止循迹便于排查 */
+#endif
+
+#ifdef debug_in_color
+uint8_t overall_task_state = 2;
+
+uint8_t QR_scanning_state = 11;
+uint8_t task1_state = 21;
+uint8_t task2_state = 0;
+uint8_t qr_task1_number = 1;
+uint8_t qr_task2_number = 4;
+
+uint8_t home_flag = 0;
+uint8_t gray_flag = 0;
+
+float cmd_x, cmd_y, cmd_yaw;   /* 上位机命令: 需要纠正的 x/y/yaw */
+
+uint8_t task1_point_index = 0;   
+uint8_t task2_point_index = 0;   
+
+uint8_t slot_colors[5];          /* 颜色识别结果: 槽1~5(左->右)的颜色编号 0=黑 1=白 2=红 3=绿 4=蓝 */
+uint8_t plan1[5]={
+  1,5,2,4,3
+};                /* 任务1抓取方案: plan1[i] = 第 i 步去几号槽抓(1~5) */
+uint8_t plan2[3];                /* 任务2抓取方案: plan2[i] = 第 i 步去几号槽抓(1~3) */
+char task2_abc_order[4] = {0};   /* 任务2现场奖杯摆放(右->左)，如 "CBA"；需上位机/视觉填入或人工标定 */
+
+/* 任务2 槽位/领奖台坐标(体坐标, m)——按场地标定后填写 */
+
+uint8_t task1_color_started = 0U;     /* 循迹阶段是否已请求颜色识别 */
+uint8_t task1_plan_ready = 1U;        /* plan1 是否已生成 */
+uint8_t task2_plan_ready = 0U;        /* plan2 是否已生成 */
+uint8_t task2_track_stop = 0U;         /* 1=任务2循迹超时，停止循迹便于排查 */
+#endif
+
 /* USER CODE END PV */
 
 /* Private function prototypes -----------------------------------------------*/
@@ -184,7 +253,7 @@ int fputc(int ch, FILE *stream)
     return ch;
 }
 
-/* 阻塞等待串口2二维码就绪，超时返回 0 */
+/* 阻塞等待串口6二维码就绪，超时返回 0 */
 static uint8_t WaitQRReady(uint32_t timeout_ms)
 {
     uint32_t start = HAL_GetTick();
@@ -257,7 +326,7 @@ int main(void)
   Chassis_Init(&huart1);
   Gray_Init();
 
-  Usart2_RxInit();   /* 串口2接收中断：上位机命令帧（x/y/yaw + 完毕帧） */
+  Usart6_RxInit();   /* 串口6接收中断：上位机(K230)命令帧（x/y/yaw + 完毕帧 + 二维码/颜色/字母） */
 
 
   // printf("System start\r\n");
@@ -287,7 +356,7 @@ int main(void)
             Chassis_MovePosBlocking(0.0f,-0.65f,0.0f);
             HAL_Delay(1000);
 
-            /* 1) 通过串口2向上位机请求任务2二维码（编号1~6） */
+            /* 1) 通过串口6向上位机(K230)请求任务2二维码（编号1~6） */
             QR_Reset();
             QR_SendRequest();   /* AA 05 0A */
             if (WaitQRReady(K210_WAIT_QR_MS) == 0U) {
@@ -308,7 +377,7 @@ int main(void)
             Chassis_MovePosBlocking(0.0f,1.3f,0.0f);
             HAL_Delay(1000);
 
-            /* 1) 通过串口2向上位机请求任务1二维码（编号1~16） */
+            /* 1) 通过串口6向上位机(K230)请求任务1二维码（编号1~16） */
             QR_Reset();
             QR_SendRequest();   /* AA 05 0A */
             if (WaitQRReady(K210_WAIT_QR_MS) == 0U) {
@@ -348,6 +417,7 @@ int main(void)
           case 21://循迹捡物块阶段：循迹在 TIM2 中断里跑；主循环在这里收颜色、转舵机、生成方案
           {
             uint8_t i;
+            uint8_t ci;
 
             /* 首次进入：清缓存，并发送首次颜色识别请求（请求第1个槽位颜色） */
             if (task1_color_started == 0U) {
@@ -356,15 +426,14 @@ int main(void)
                 Color_SendRequest();   /* AA 03 0A */
             }
 
-            /* 收到 1 个颜色识别消息：只用于生成 plan1，不再转动舵机（舵机由 TIM2 自动转动） */
+            /* 每识别到一个新颜色，就在串口2打印一次（0=黑 1=白 2=红 3=绿 4=蓝） */
             if (Color_TakeNew() != 0U) {
-                if (Color_GetCount() < 5U) {   /* 收满5个颜色后不再请求 */
-                    Color_StartServoRotate();  /* 按固定延时节奏请求下一个颜色 */
-                }
+                ci = (uint8_t)(Color_GetCount() - 1U);
+                uart_printf("color[%u]: %u\r\n", (unsigned)ci, Color_GetColor(ci));
             }
 
-            /* 舵机旋转完成（固定延时）-> 发送下一次颜色识别请求 */
-            Color_Process();//舵机旋转后，固定延时
+            /* 每 COLOR_REQ_INTERVAL_MS 请求一次颜色，直到收满5个不同颜色（不再等舵机） */
+            Color_Process();
 
             /* 收满5个不同颜色(重复自动丢弃) -> 用 二维码编号+槽位颜色 生成任务1搬运方案 plan1[] */
             if ((task1_plan_ready == 0U) && (Color_IsDone() != 0U)) {
@@ -377,7 +446,6 @@ int main(void)
                     break;
                 }
                 task1_plan_ready = 1U;
-                ServoBus_SetAngle(Servo_angle[5]);
                 uart_printf("plan1 ready: slot%u->slot%u->slot%u->slot%u->slot%u\r\n",
                             plan1[0], plan1[1], plan1[2], plan1[3], plan1[4]);
             }
@@ -389,11 +457,12 @@ int main(void)
           case 22://捡完物块，依次按方案 plan1 走5个槽位（每点: 固定距离移动 + 对十字/对圆心）
           {
             uint8_t slot;          /* 本步要去的槽位 1~5（由方案 plan1 决定） */
+            #ifndef debug_in_round
 
             /* ① 移动到当前槽位：5个点定距离移动；*/
             if (task1_point_index == 5U) {
                 Chassis_MovePosBlocking_Set_V(0.20f, 0.0f, 0.0f, 0.6f);
-                Chassis_MovePosBlocking_Set_V(-0.15f, 0.7f, 0.0f, 0.6f);
+                Chassis_MovePosBlocking_Set_V(-0.1f, 0.8f, 0.0f, 0.6f);
                 task1_state = 23;
                 Chassis_stop();
                 break;
@@ -409,14 +478,15 @@ int main(void)
 
             /* 方案保护：plan1 无效(未生成/越界)时停住排查 */
             slot = plan1[task1_point_index];
-            if ((slot < 1U) || (slot > 5U)) {
+            if ((slot < 1U) || (slot > 5U)) 
+            {
                 uart_printf("plan1[%u]=%u invalid!\r\n", task1_point_index, slot);
                 Chassis_stop();
                 break;
             }
-
             HAL_Delay(1000);
             Chassis_stop();
+            #endif
 
             /* ② 按 is_align[槽位] 决定本点动作 */
             if (task1_is_align[task1_point_index])
@@ -435,7 +505,7 @@ int main(void)
                   }
                   HAL_Delay(200);
                 }
-                Cross_SendDone();   /* 调整完毕: 回传 ALIGN_DONE 给上位机确认 */
+                Cross_SendDone();
                 Control_CorrectYawDeg(-90.0f);   /* 把当前 yaw 纠正为 -90° */
 
                 /* ③ 对十字完成后的动作：后退 -> 舵机到固定位置 -> 延时 -> 后退 */
@@ -452,10 +522,16 @@ int main(void)
             } 
             else
             {
+              #ifndef debug_in_round
                 /* ---- 对圆心（上位机只回传 x/y，无 yaw） ---- */
-                circle_flag = 1U;
                 Control_StaticTurn(90.0f, 5000U);
-
+              #endif
+#ifdef CIRCLE_ALIGN_SPEED_MODE
+                /* 速度控制模式：上位机定时下发 x/y 速度，收到完成帧立刻停车 */
+                Circle_AlignBySpeed(0.1f, 0.0f);   
+#else
+                /* 位置控制模式（原有逻辑）：上位机回传 x/y 位置偏差 */
+                circle_flag = 1U;
                 Circle_SendRequest();   /* AA 02 0A：请求回传圆心 x/y */
                 while (circle_flag)   /* 一直等上位机发完毕帧(AA 00 0A)才结束 */
                 {
@@ -469,30 +545,56 @@ int main(void)
                   HAL_Delay(200);
                 }
                 Circle_SendDone();   /* 对圆心调整完毕 */
-
+#endif
+                #ifndef debug_in_round
                 /* ③ 对圆心完成后的动作：前进 -> 舵机到指定位置 -> 再后退5cm */
-                Chassis_MovePosBlocking(0.0f, 0.05f, 0.0f);   /* 前进） */
-                Chassis_stop();
                 ServoBus_SetAngle(Servo_angle[slot - 1U]);     /* 舵机转到指定位置 */
                 HAL_Delay(2000);               
+                Chassis_MovePosBlocking(0.0f, 0.05f, 0.0f);   /* 前进） */
+                Chassis_stop();
                 Chassis_MovePosBlocking(0.0f, -0.10f, 0.0f);   /* 后退 */
-                ServoBus_SetAngle(Servo_angle[5]);     /* 锁住其他物块 */
-                HAL_Delay(2000);
+                /* ④ 按下一槽位方向，把舵机相对当前槽位转 ±36°（不再直接锁死） */
+                if (task1_point_index < 4U) 
+                {
+                    if (plan1[task1_point_index + 1U] - slot > 3U) 
+                    {
+                        ServoBus_SetAngle((uint16_t)(Servo_angle[slot - 1U] + 108U));
+                    } 
+                    else if (plan1[task1_point_index + 1U] - slot < -3U) 
+                    {
+                        ServoBus_SetAngle((uint16_t)(Servo_angle[slot - 1U] - 108U));
+                    }
+                    else if(plan1[task1_point_index + 1U] - slot > 0U) 
+                    {
+                        ServoBus_SetAngle((uint16_t)(Servo_angle[slot - 1U] + 36U));
+                    } 
+                    else
+                    {
+                        ServoBus_SetAngle((uint16_t)(Servo_angle[slot - 1U] - 36U));
+                    }
+                }
+                else
+                {
+                    ServoBus_SetAngle(Servo_angle[6]);     /* 为任务二做准备 */
+                }
+
+                HAL_Delay(1000);
                 if(task1_point_index == 0)
                 {
                   Chassis_MovePosBlocking(0.20f, 0.0f, 0.0f);
                 }
-                Chassis_stop();
-            }
-
+                Chassis_stop();            
+                
             task1_point_index++;
+            #endif
+              }
             break;
           }
 
           case 23://5个点全部走完 -> 进入任务2
             HAL_Delay(100);
             ServoBus_SetAngle(SERVO_TASK2_ANGLE);
-            ServoBus_SetAngle(Servo_angle[0]);
+            // ServoBus_SetAngle(Servo_angle[6]);
             Control_StaticTurn(-160.0f, 5000U);
             HAL_Delay(100);
             Chassis_StrafeLeftUntilLine(-0.30f, K210_STRAFE_LINE_MS);
@@ -530,6 +632,10 @@ int main(void)
                 plan2[2] = 1U;   /* C 季军：Servo_angle[0] = 槽1 */
                 task2_plan_ready = 1U;
                 task2_point_index = 0U;
+                /* 复位 state31 收物块舵机状态：进入 31 立即转第 1 个字母槽位 */
+                t2_servo_count = 0U;
+                t2_servo_index = 0U;
+                t2_servo_first_sent = 0U;
                 uart_printf("plan2 ready(B->A->C): %u->%u->%u\r\n",
                             plan2[0], plan2[1], plan2[2]);
             }
@@ -550,8 +656,10 @@ int main(void)
             }
 
             /* 三块都放完 -> 回线返程（先判断，避免 plan2[3] 越界） */
-            if (task2_point_index == 3U) {
-                Chassis_MovePosBlocking(0.20f,0.0f,0.0f);
+            if (task2_point_index == 3U) 
+            {
+                Servo_SetAngle(0U);
+                Chassis_MovePosBlocking_Set_V(0.20f,0.0f,0.0f,0.5f);
                 Control_StaticTurn(20.0f, 5000U);
                 Chassis_StrafeLeftUntilLine(-0.30f, K210_STRAFE_LINE_MS);
                 Chassis_stop();//找到黑先后停下
@@ -659,7 +767,6 @@ int main(void)
             else if (task2_is_align[task2_point_index] == 2)
             {
                 /* ---- 对圆心（上位机只回传 x/y，无 yaw） ---- */
-                circle_flag = 1U;
                 if(task2_point_index == 0U)
                 {
                   Control_StaticTurn(0.0f, 5000U);
@@ -668,6 +775,15 @@ int main(void)
                 {
                   Control_StaticTurn(-90.0f, 5000U);
                 }
+
+#ifdef CIRCLE_ALIGN_SPEED_MODE
+                /* 速度控制模式：上位机定时下发 x/y 速度，收到完成帧立刻停车 */
+                /* 限幅 0.3 m/s，保持与上面 Control_StaticTurn 一致的航向 */
+                Circle_AlignBySpeed(0.3f,
+                                    (task2_point_index == 0U) ? 0.0f : -90.0f);
+#else
+                /* 位置控制模式（原有逻辑）：上位机回传 x/y 位置偏差 */
+                circle_flag = 1U;
                 Circle_SendRequest();   /* AA 02 0A：请求回传圆心 x/y */
                 while (circle_flag)   /* 一直等上位机发完毕帧(AA 00 0A)才结束 */
                 {
@@ -681,6 +797,7 @@ int main(void)
                   HAL_Delay(200);
                 }
                 Circle_SendDone();   /* 对圆心调整完毕 */
+#endif
 
                 /* ③ 对圆心完成后的动作：前进 -> 舵机到指定位置 -> 再后退5cm */
                 Chassis_MovePosBlocking(0.0f, 0.05f, 0.0f);   /* 前进 */
@@ -711,7 +828,7 @@ int main(void)
         };//未检测到标志位就堵塞
         Chassis_stop();
         HAL_Delay(100);
-        Servo_SetAngle(0U);
+  
         Chassis_MovePosBlocking(-0.15f, 0.27f, 0.0f);
         Chassis_stop();
         overall_task_state = 0;
@@ -801,7 +918,7 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
       if(overall_task_state == 2 && task1_state == 21)
       {
         static uint16_t t1_servo_count = 0;   /* 自动拾取计数(每100个循迹周期转一次) */
-        static uint8_t  t1_servo_index = 0;   /* 当前已对准的槽位 0~4 */
+        static uint8_t  t1_servo_index = 1;   /* 当前已对准的槽位 0~4 */
 
         gray_flag = Grey_PID_Update();
 
@@ -811,22 +928,53 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         {
             Chassis_stop();
             Kalman_SetYawDeg(-179.2f);
-            if (task1_plan_ready != 0U) {
+            if (task1_plan_ready != 0U)
+            {
+                #ifndef debug_in_color
                 task1_state = 22;
+                #endif
             }
         }
         else
         {
             if (gray_flag == 0U)
             {
+              #ifndef debug_in_color
               Chassis_TrackDifferential(0.2f, Grey_Get_Output());
+              #endif
               t1_servo_count++;
-              if (t1_servo_count >= 95U && t1_servo_index < 5U)
+              #ifdef start_from_task1
+              if(t1_servo_index == 1U)
+              {
+                if(t1_servo_count >= 222U)
+                {
+                  t1_servo_count = 0U;
+                  ServoBus_SetAngle(Servo_angle[t1_servo_index]);
+                  t1_servo_index++;
+                }
+              }
+              #endif
+              // else if (t1_servo_count >= 135U && t1_servo_index < 6U)
+              // {
+              //     t1_servo_count = 0U;
+              //     ServoBus_SetAngle(Servo_angle[t1_servo_index]);
+              //     t1_servo_index++;
+              // }
+
+              if (t1_servo_count >= 135U && t1_servo_index < 6U)
               {
                   t1_servo_count = 0U;
                   ServoBus_SetAngle(Servo_angle[t1_servo_index]);
                   t1_servo_index++;
               }
+              
+              // else if (t1_servo_count >= 130U && t1_servo_index == 5U)
+              // {
+              //     t1_servo_count = 0U;
+              //     Chassis_stop();
+              //     ServoBus_SetAngle(Servo_angle[t1_servo_index]);
+              //     t1_servo_index++;
+              // }
             }
             else
             {
@@ -837,11 +985,8 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
 
       if(overall_task_state == 3 && task2_state == 31 && task2_track_stop == 0U)
       {
-        static uint16_t t2_servo_count = 0;
-        static uint8_t t2_servo_index = 0 ;
-        
         gray_flag = Grey_PID_Update();
-
+        
         if ((track_sys.sensor_binary[5] == 0U) &&
             (track_sys.sensor_binary[6] == 0U) &&
             (track_sys.sensor_binary[7] == 0U))
@@ -857,40 +1002,52 @@ void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim)
         {            
             if (gray_flag == 0U)
             {
-                Chassis_TrackDifferential(0.2f, Grey_Get_Output());
+                static float task2_track_speed = 0.1f;
+                Chassis_TrackDifferential(task2_track_speed, Grey_Get_Output());
                 t2_servo_count++;
                 if(t2_servo_index < 3U)
                 {
-                  /* 第 servo_index 次要接的字母 = task2_scheme[qr-1][servo_index]（摆放/到达顺序）
-                   * 固定槽位：A->Servo_angle[1]  B->Servo_angle[2]  C->Servo_angle[0] */
-                  #ifdef start_from_task2
-                  uint16_t step_cycles = (servo_index < 1U) ? 300U : 100U;
-                  #else
-                  uint16_t step_cycles = 100U;
-                  #endif
+                  /* 第 t2_servo_index 次要接的字母 = task2_scheme[qr-1][t2_servo_index]
+                   * 固定槽位：A->Servo_angle[1]  B->Servo_angle[2]  C->Servo_angle[0]
+                   * 节奏：刚进入 state31 立即转第 1 个字母槽位，之后每 240 个循迹周期转下一个 */
                   uint8_t  letter;
                   uint8_t  angle_idx;
-                  if (t2_servo_count >= step_cycles) {
+
+                  if (t2_servo_first_sent == 0U)
+                  {
+                    /* 刚进入 31：立即转到第 1 个字母对应的槽位 */
+                    letter = Task2_GetSchemeTrophy(qr_task2_number, 0U);
+                    if (letter == 0U)      angle_idx = 1U;   /* A -> Servo_angle[1] */
+                    else if (letter == 1U) angle_idx = 2U;   /* B -> Servo_angle[2] */
+                    else                   angle_idx = 0U;   /* C -> Servo_angle[0] */
+                    ServoBus_SetAngle(Servo_angle[angle_idx]);
+                    t2_servo_first_sent = 1U;
+                    t2_servo_index = 1U;
+                    t2_servo_count = 0U;
+                  }
+                  else if (t2_servo_count >= 250U)
+                  {
                     letter = Task2_GetSchemeTrophy(qr_task2_number, t2_servo_index);
                     if (letter == 0U)      angle_idx = 1U;   /* A -> Servo_angle[1] */
                     else if (letter == 1U) angle_idx = 2U;   /* B -> Servo_angle[2] */
                     else                   angle_idx = 0U;   /* C -> Servo_angle[0] */
                     t2_servo_index++;
                     ServoBus_SetAngle(Servo_angle[angle_idx]);
-                    t2_servo_count = 0;
+                    t2_servo_count = 0U;
                   }
                 }
-                else if(t2_servo_index == 3U && t2_servo_count >= 100U)
+                else if(t2_servo_index == 3U && t2_servo_count >= 240U)
                 {
                   t2_servo_index++;
                   ServoBus_SetAngle(Servo_angle[6]);   /* 锁住 */
-                  t2_servo_count = 0;
+                  t2_servo_count = 0U;
+                  task2_track_speed = 0.25f; 
                 }
-                else if(t2_servo_index == 4U && t2_servo_count >= 100U)
+                else if(t2_servo_index == 4U && t2_servo_count >= 120U)
                 {
                   t2_servo_index++;
-                  Servo_SetAngle(TASK2_SERVO_ANGLE);   /* 举高 */
-                  t2_servo_count = 0;
+                  Servo_SetAngle(TASK2_SERVO_UP_ANGLE);   /* 举高 */
+                  t2_servo_count = 0U;
                 }
             }
             else
@@ -945,7 +1102,6 @@ void HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
   Emm_V5_TxCpltCallback(huart);
   Servo_TxCpltCallback(huart);
-  Usart2_TxCpltCallback(huart);
 }
 
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)

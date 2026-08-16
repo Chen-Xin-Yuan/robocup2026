@@ -340,7 +340,7 @@ void Control_AlignInit(void)
     Control_CrossAlign.arrived = 0U;
 }
 
-// 周期调用：轮询 K210 → 两段式位置控制
+// 周期调用：读取 USART6 中断解析出的 K210/K230 十字数据 → 两段式位置控制
 //   ① 纠 yaw：原地位置旋转，使机器人航向对准十字（K210 yaw -> 0）
 //   ② 锁定航向平移：用 Chassis_MovePos 位置控制，把 x/y 平移到 0（对准十字中心）
 void Control_AlignUpdate(void)
@@ -356,7 +356,7 @@ void Control_AlignUpdate(void)
         return;
     }
 
-    /* 轮询 K210 并读取最新十字数据（无新帧时沿用上一帧） */
+    /* K210/K230 数据由 USART6 中断接收解析，这里直接读最新十字数据（无新帧时沿用上一帧） */
     K210_Poll();
     fresh = K210_GetCrossData(&x_cm, &y_cm, &yaw_deg);
     if (fresh != 0U) {

@@ -67,6 +67,7 @@ extern DMA_HandleTypeDef hdma_usart3_tx;
 extern UART_HandleTypeDef huart1;
 extern UART_HandleTypeDef huart2;
 extern UART_HandleTypeDef huart3;
+extern UART_HandleTypeDef huart6;
 /* USER CODE BEGIN EV */
 
 /* USER CODE END EV */
@@ -287,17 +288,8 @@ void USART1_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-  /* USART2 上位机数据帧统一喂给帧状态机(对十字/对圆心/颜色识别共用)，
-   * 不再按任务状态门控：由主逻辑通过 cross_flag / circle_flag /
-   * Color_IsDone() 判断当前该用哪一帧，避免状态条件写错导致收不到数据。
-   */
-  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_RXNE) != RESET) {
-      Usart2_OnByte((uint8_t)(huart2.Instance->DR & 0xFFU));
-  }
-  /* 清溢出标志，避免 RXNE 被卡住（任何模式下都清） */
-  if (__HAL_UART_GET_FLAG(&huart2, UART_FLAG_ORE) != RESET) {
-      (void)huart2.Instance->DR;
-  }
+  /* USART2 仅用于电脑调试打印（uart_printf，TX DMA），不再接收上位机数据；
+   * 上位机(K230)数据帧接收已移到 USART6_IRQHandler。 */
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);
   /* USER CODE BEGIN USART2_IRQn 1 */
@@ -348,5 +340,20 @@ void DMA2_Stream7_IRQHandler(void)
 }
 
 /* USER CODE BEGIN 1 */
+
+/**
+  * @brief This function handles USART6 global interrupt (上位机 K230 通信).
+  */
+void USART6_IRQHandler(void)
+{
+  /* 逐字节读 DR 喂给帧状态机（对十字/对圆心/颜色/二维码 + K210/K230 ASCII 行） */
+  if (__HAL_UART_GET_FLAG(&huart6, UART_FLAG_RXNE) != RESET) {
+      Usart6_OnByte((uint8_t)(huart6.Instance->DR & 0xFFU));
+  }
+  /* 清溢出标志，避免 RXNE 被卡住（任何模式下都清） */
+  if (__HAL_UART_GET_FLAG(&huart6, UART_FLAG_ORE) != RESET) {
+      (void)huart6.Instance->DR;
+  }
+}
 
 /* USER CODE END 1 */

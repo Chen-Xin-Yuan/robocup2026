@@ -5,6 +5,8 @@
 #include "Emm_V5.h"
 #include "usart.h"
 #include "gray.h"
+#include "usart_sent.h"
+#include "control.h"
 #include <math.h>
 #include <string.h>
 #include <stdarg.h>
@@ -239,7 +241,7 @@ float Chassis_MovePos(float sx, float sy, float theta_deg)
     set_speed_pos_target(&Motor3, s3 / t, s3);
     set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
-    return ((t + 0.1) * 1000.0f);
+    return (float)((t + 0.1f) * 1000.0f);
 }
 
 float Chassis_MovePos_Set_V(float sx, float sy, float theta_deg, float V)
@@ -270,7 +272,7 @@ float Chassis_MovePos_Set_V(float sx, float sy, float theta_deg, float V)
     set_speed_pos_target(&Motor4, s4 / t, s4);//速度位置控制
 
     wheel_default_speed = temp;
-    return ((t + 0.1) * 1000.0f);
+    return (float)((t + 0.1f) * 1000.0f);
 }
 
 /*================== 状态查询 ==================*/
@@ -470,4 +472,56 @@ void Chassis_StrafeRightUntilLine(float speed, uint32_t timeout_ms)
         HAL_Delay(5U);
     }
     Chassis_stop();
+}
+/*================== 对圆心(速度控制) 与上位机通信 ==================*/
+
+void Circle_AlignBySpeed(float max_speed_mps, float hold_yaw_deg)
+{
+    float vx = 0.0f;
+    float vy = 0.0f;
+    uint32_t circle_next_wake = 0U;   /* 固定周期定时（osDelayUntil 语义） */
+
+#ifdef CIRCLE_ALIGN_USE_ANGLE_HOLD
+    /* 方式1：Control_AngleHoldMove 速度控制 + 航向保持 */
+    /* 动态角度环初始化：使能航向保持（Control_AngleHoldMove 依赖它） */
+    Control_Init();
+#else
+    /* 方式2：Chassis_Move 纯速度控制（不纠航向，hold_yaw_deg 忽略） */
+    (void)hold_yaw_deg;
+#endif
+
+    circle_flag = 1U;
+    circle_speed_active = 1U;      /* 通知接收中断: 收到完毕帧时立刻停车 */
+
+    circle_next_wake = HAL_GetTick();
+
+    while (circle_flag != 0U)      /* 收到完成帧 AA 00 0A -> circle_flag=0 -> 退出 */
+    {
+        Circle_SendRequest();      /* AA 02 0A：每 100ms 向上位机请求一次 x/y 速度 */
+        if (Circle_GetCorrection(&vx, &vy) != 0U) {
+            /* 上位机下发的是 x/y 方向速度(m/s)，这里做限幅防止数值异常导致飞车 */
+            if (vx >  max_speed_mps) vx =  max_speed_mps;
+            if (vx < -max_speed_mps) vx = -max_speed_mps;
+            if (vy >  max_speed_mps) vy =  max_speed_mps;
+            if (vy < -max_speed_mps) vy = -max_speed_mps;
+        }
+        if (circle_flag == 0U) break;   /* 完毕帧在取数期间到达: 不再补发速度 */
+
+#ifdef CIRCLE_ALIGN_USE_ANGLE_HOLD
+        /* 方式1：速度控制 + 航向保持，保持 hold_yaw_deg 绝对航向 */
+        Control_AngleUpdate();
+        Control_AngleHoldMove(vx, vy, hold_yaw_deg);
+#else
+        /* 方式2：纯速度控制，直接下发 vx/vy */
+        Chassis_Move(vx, vy, 0.0f);
+#endif
+        circle_next_wake += 40U;
+        while ((int32_t)(HAL_GetTick() - circle_next_wake) < 0) {
+            /* 忙等，直到到达该时刻 */
+        }
+    }
+
+    circle_speed_active = 0U;        /* 速度模式结束 */
+    Chassis_stop();                  /* 收到完成帧，立刻停止 */
+    Circle_SendDone();               /* 回传 CIRCLE_DONE 给上位机确认 */
 }

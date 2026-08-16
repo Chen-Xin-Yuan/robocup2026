@@ -14,11 +14,11 @@ float task1_move_distance_X_m[5] =
 };
 float task1_move_distance_Y_m[5] = 
 {
-    0.43f,
-    0.35f,
+    0.41f,
+    0.33f,
     0.05f,
-    -0.24f,
-    0.25f
+    -0.22f,
+    0.27f
 };
 
 float task2_move_distance_X_m[3] = 
