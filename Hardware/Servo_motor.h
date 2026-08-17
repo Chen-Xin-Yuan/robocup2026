@@ -8,13 +8,13 @@
 // #define debug  
 // #define start_from_home
 // #define start_from_task1
-// #define start_from_task2
+#define start_from_task2
 // #define debug_in_round
-#define debug_in_color
+// #define debug_in_color
 
 extern uint16_t Servo_angle[7];
 #define SERVO_TASK1_ANGLE 94
-#define SERVO_TASK2_ANGLE 103
+#define SERVO_TASK2_ANGLE 96
 
 
 /* 同时初始化普通 PWM 舵机和 USART3 总线舵机。 */

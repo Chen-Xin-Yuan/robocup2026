@@ -482,8 +482,9 @@ void Circle_AlignBySpeed(float max_speed_mps, float hold_yaw_deg)
     uint32_t circle_next_wake = 0U;   /* 固定周期定时（osDelayUntil 语义） */
 
 #ifdef CIRCLE_ALIGN_USE_ANGLE_HOLD
-    /* 方式1：Control_AngleHoldMove 速度控制 + 航向保持 */
-    /* 动态角度环初始化：使能航向保持（Control_AngleHoldMove 依赖它） */
+    /* 方式1：Control_AngleUpdate 速度控制 + 航向保持 */
+    /* 目标航向取进入时的当前航向（前面 Control_StaticTurn 已转到 hold_yaw_deg） */
+    (void)hold_yaw_deg;
     Control_Init();
 #else
     /* 方式2：Chassis_Move 纯速度控制（不纠航向，hold_yaw_deg 忽略） */
@@ -508,9 +509,12 @@ void Circle_AlignBySpeed(float max_speed_mps, float hold_yaw_deg)
         if (circle_flag == 0U) break;   /* 完毕帧在取数期间到达: 不再补发速度 */
 
 #ifdef CIRCLE_ALIGN_USE_ANGLE_HOLD
-        /* 方式1：速度控制 + 航向保持，保持 hold_yaw_deg 绝对航向 */
+        /* 方式1：速度控制 + 航向保持。
+         * 上位机下发的是机体(相机)坐标系速度 vx/vy：直接下发，不做世界系旋转；
+         * 航向保持由角度环输出的 omega 完成。 */
         Control_AngleUpdate();
-        Control_AngleHoldMove(vx, vy, hold_yaw_deg);
+        Chassis_Move(vx, vy,
+                     Control_DynamicAngle.omega_cmd_deg_s * CONTROL_DEG_TO_RAD);
 #else
         /* 方式2：纯速度控制，直接下发 vx/vy */
         Chassis_Move(vx, vy, 0.0f);

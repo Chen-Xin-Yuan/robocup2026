@@ -15,7 +15,7 @@
 #define SERVO_COMMAND_MAX_LEN          24U
 #define SERVO_TX_QUEUE_DEPTH           4U
 //67 48 25
-#define SERVO_BUS_1          28U
+#define SERVO_BUS_1          3U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
@@ -212,7 +212,7 @@ void ServoBus_SetAngle(uint16_t angle_deg)
 void Servo_Init(void)
 {
     #ifdef start_from_home
-    Servo_SetAngle(0U);
+    Servo_SetAngle(10U);
     #endif
 
     #ifdef start_from_task1

@@ -308,6 +308,7 @@ static void usart6_color_add(uint8_t ch)
     if (c >= 5U) {
         return;   /* 非法颜色，忽略 */
     }
+
     /* 重复颜色：自动丢弃后一个(不计入)，继续检测直到凑齐5个不同颜色 */
     for (i = 0U; i < (uint8_t)usart6_color_count; i++) {
         if (usart6_colors[i] == c) {

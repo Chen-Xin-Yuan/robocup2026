@@ -119,9 +119,9 @@ void Chassis_StrafeRightUntilLine(float speed, uint32_t timeout_ms);
  * @param max_speed_mps 上位机速度指令限幅(m/s)，防止数值异常导致飞车
  * @param hold_yaw_deg  对圆心期间要保持的绝对航向(deg)，通常与前面的 Control_StaticTurn 目标一致
  * @note  本机每 100ms 发一次请求帧 AA 02 0A，上位机收到后回传 x/y 方向速度(m/s)
- *        （帧格式 AA 08 <vx:4B> <vy:4B> 0A）；
+ *        （帧格式 AA 08 <vx:4B> <vy:4B> 0A；vx/vy 为机体(相机)坐标系，右/前为正）；
  *        速度输出由 CIRCLE_ALIGN_USE_ANGLE_HOLD 宏选择：
- *          定义 -> Control_AngleHoldMove（速度 + 保持航向，需传 hold_yaw_deg）；
+ *          定义 -> Control_AngleUpdate 角度环输出 omega + 直接下发 vx/vy（机体坐标系）；
  *          注释 -> Chassis_Move（纯速度，hold_yaw_deg 忽略）。
  *        收到完成帧 AA 00 0A（中断把 circle_flag 置 0）后立刻 Chassis_stop() 并回传 CIRCLE_DONE。
  */
