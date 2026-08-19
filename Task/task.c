@@ -7,7 +7,7 @@
 float task1_move_distance_X_m[5] = 
 {
     -0.10f,
-    0.0f,
+    0.03f,
     0.80f,
     -0.12f,
     0.65f
@@ -17,21 +17,31 @@ float task1_move_distance_Y_m[5] =
     0.41f,
     0.33f,
     0.05f,
-    -0.22f,
+    -0.24f,
     0.27f
 };
 
+#ifdef TWO_IS_ROUND
 float task2_move_distance_X_m[3] = 
 {
     -0.15f,
-    0.63f,
+    0.7f,
     0.30f
 };
+#else
+float task2_move_distance_X_m[3] = 
+{
+    -0.15f,
+    0.71f,
+    0.30f
+};
+#endif
+
 float task2_move_distance_Y_m[3] = 
 {
     0.0f,
     0.0f,
-    0.0f
+    0.05f
 };
 
 bool task1_is_align[5]=
@@ -42,13 +52,21 @@ bool task1_is_align[5]=
     false,
     false
 };
-
+#ifdef TWO_IS_ROUND
 uint8_t task2_is_align[3]=
 {
-    3,
+    2,
     3,
     2
 };
+#else
+uint8_t task2_is_align[3]=
+{
+    2,
+    3,
+    2
+};
+#endif
 /* ==================== 方案表（来源于规则附录） ==================== */
 
 /* 任务1 二维码对应搬运方案表(附录A): 每一行 = 该二维码编号对应的搬运顺序

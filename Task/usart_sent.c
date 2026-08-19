@@ -172,7 +172,7 @@ void K210_ClearCross(void)
 
 #define COLOR_MAX                5U      /* 颜色识别: 收满5个不同颜色即结束 */
 #define COLOR_REQ_INTERVAL_MS    50U    /* 颜色识别请求间隔(ms)：每 50ms 向上位机请求 1 个颜色 */
-#define COLOR_COOLDOWN_MS        800U   /* 收到有效颜色后的冷却时间(ms)：冷却期内不发请求 */
+#define COLOR_COOLDOWN_MS        400U   /* 收到有效颜色后的冷却时间(ms)：冷却期内不发请求 */
 
 
 static uint8_t usart6_frame_buf[CROSS_FRAME_LEN];   /* 最大帧数据长度 12 */

@@ -129,7 +129,7 @@ void Chassis_Init(UART_HandleTypeDef *_USART)
     Step_ZDT_Init(&Motor3, 3, _USART, 0, CHASSIS_WHEEL_DIA, false);
     Step_ZDT_Init(&Motor4, 4, _USART, 1, CHASSIS_WHEEL_DIA, true);
 
-    Chassis_Setdefaultspeed(0.2f);
+    Chassis_Setdefaultspeed(0.4f);
     Chassis_stop();
 }
 

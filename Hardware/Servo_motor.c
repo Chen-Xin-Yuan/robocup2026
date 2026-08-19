@@ -15,7 +15,7 @@
 #define SERVO_COMMAND_MAX_LEN          24U
 #define SERVO_TX_QUEUE_DEPTH           4U
 //67 48 25
-#define SERVO_BUS_1          3U
+#define SERVO_BUS_1          44U
 #define SERVO_BUS_2          SERVO_BUS_1+72
 #define SERVO_BUS_3          SERVO_BUS_2+72
 #define SERVO_BUS_4          SERVO_BUS_3+72
@@ -252,14 +252,31 @@ void Servo_Init(void)
 
 void ServoBus_Test(void)
 {
-    ServoBus_SetAngle(SERVO_BUS_1);
-    HAL_Delay(2000U);
-    ServoBus_SetAngle(SERVO_BUS_2);
-    HAL_Delay(2000U);
-    ServoBus_SetAngle(SERVO_BUS_3);
-    HAL_Delay(2000U);
-    ServoBus_SetAngle(SERVO_BUS_4);
-    HAL_Delay(2000U);
-    ServoBus_SetAngle(SERVO_BUS_5);
-    HAL_Delay(2000U);
+    // ServoBus_SetAngle(SERVO_BUS_1);
+    // HAL_Delay(2000U);
+    // ServoBus_SetAngle(SERVO_BUS_2);
+    // HAL_Delay(2000U);
+    // ServoBus_SetAngle(SERVO_BUS_3);
+    // HAL_Delay(2000U);
+    // ServoBus_SetAngle(SERVO_BUS_4);
+    // HAL_Delay(2000U);
+    // ServoBus_SetAngle(SERVO_BUS_5);
+    // HAL_Delay(2000U);
+    Servo_SetAngle(89);
+    HAL_Delay(5000);
+    Servo_SetAngle(90);
+    HAL_Delay(5000);
+    Servo_SetAngle(91);
+    HAL_Delay(5000);
+    Servo_SetAngle(92);
+    HAL_Delay(5000);
+    Servo_SetAngle(93);
+    HAL_Delay(5000);
+    Servo_SetAngle(94);
+    HAL_Delay(5000);
+
+
+
+    HAL_Delay(100000);
+    
 }
